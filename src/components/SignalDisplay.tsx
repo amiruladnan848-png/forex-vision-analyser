@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, Target, ShieldAlert, ArrowUpRight, ArrowDownRight, BarChart3, Layers, Zap } from "lucide-react";
+import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap } from "lucide-react";
+import React from "react";
 
 export interface Signal {
   pair: string;
@@ -33,7 +34,6 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.5 }}
     >
-      {/* Header */}
       <div className={`p-4 border-b border-border/30 ${isBuy ? "bg-buy/5" : "bg-sell/5"}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -72,9 +72,8 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Entry, SL, TP */}
         <div className="grid grid-cols-2 gap-3">
-          <PriceBox icon={<ArrowUpRight className="w-4 h-4" />} label="ENTRY" value={signal.entry} color="text-primary" />
+          <PriceBox icon={<TrendingUp className="w-4 h-4" />} label="ENTRY" value={signal.entry} color="text-primary" />
           <PriceBox icon={<ShieldAlert className="w-4 h-4" />} label="STOP LOSS" value={signal.stopLoss} color="text-destructive" />
           <PriceBox icon={<Target className="w-4 h-4" />} label="TP 1" value={signal.takeProfit1} color="text-accent" />
           <PriceBox icon={<Target className="w-4 h-4" />} label="TP 2" value={signal.takeProfit2} color="text-accent" />
@@ -82,7 +81,6 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
           <PriceBox icon={<BarChart3 className="w-4 h-4" />} label="RISK:REWARD" value={signal.riskReward} color="text-warning" />
         </div>
 
-        {/* Strategy */}
         <div className="rounded-md border border-border/30 p-3 bg-muted/10">
           <div className="flex items-center gap-2 mb-2">
             <Zap className="w-4 h-4 text-primary" />
@@ -91,7 +89,6 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
           <p className="font-mono text-sm text-foreground/90">{signal.strategy}</p>
         </div>
 
-        {/* Patterns & Indicators */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -100,13 +97,8 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
             </div>
             <div className="flex flex-wrap gap-1">
               {signal.patterns.map((p, i) => (
-                <motion.span
-                  key={i}
-                  className="px-2 py-0.5 rounded border border-primary/20 bg-primary/5 font-mono text-[10px] text-primary"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.5 + i * 0.1 }}
-                >
+                <motion.span key={i} className="px-2 py-0.5 rounded border border-primary/20 bg-primary/5 font-mono text-[10px] text-primary"
+                  initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.5 + i * 0.1 }}>
                   {p}
                 </motion.span>
               ))}
@@ -119,13 +111,8 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
             </div>
             <div className="flex flex-wrap gap-1">
               {signal.indicators.map((ind, i) => (
-                <motion.span
-                  key={i}
-                  className="px-2 py-0.5 rounded border border-accent/20 bg-accent/5 font-mono text-[10px] text-accent"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.7 + i * 0.1 }}
-                >
+                <motion.span key={i} className="px-2 py-0.5 rounded border border-accent/20 bg-accent/5 font-mono text-[10px] text-accent"
+                  initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.7 + i * 0.1 }}>
                   {ind}
                 </motion.span>
               ))}
@@ -133,19 +120,17 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
           </div>
         </div>
 
-        {/* Key Levels */}
         {signal.keyLevels.length > 0 && (
           <div className="rounded-md border border-border/30 p-3 bg-muted/10">
             <span className="font-display text-[10px] font-semibold tracking-wider text-muted-foreground">KEY LEVELS</span>
             <div className="flex flex-wrap gap-2 mt-2">
               {signal.keyLevels.map((l, i) => (
-                <span key={i} className="font-mono text-xs text-foreground/80">{l}</span>
+                <span key={i} className="font-mono text-xs text-foreground/80 px-2 py-0.5 rounded bg-muted/30">{l}</span>
               ))}
             </div>
           </div>
         )}
 
-        {/* Analysis */}
         <div className="rounded-md border border-border/30 p-3 bg-muted/10">
           <span className="font-display text-[10px] font-semibold tracking-wider text-muted-foreground">FULL ANALYSIS</span>
           <p className="font-body text-sm text-foreground/80 mt-2 leading-relaxed">{signal.analysis}</p>
@@ -156,18 +141,13 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
 };
 
 const PriceBox = ({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) => (
-  <motion.div
-    className="rounded-md border border-border/30 p-3 bg-muted/10"
-    initial={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.3 }}
-  >
+  <div className="rounded-md border border-border/30 p-3 bg-muted/10 animate-fade-in">
     <div className="flex items-center gap-1.5 mb-1">
       <span className={color}>{icon}</span>
       <span className="font-display text-[10px] font-semibold tracking-wider text-muted-foreground">{label}</span>
     </div>
     <span className={`font-mono text-lg font-bold ${color}`}>{value}</span>
-  </motion.div>
+  </div>
 );
 
 export default SignalDisplay;
