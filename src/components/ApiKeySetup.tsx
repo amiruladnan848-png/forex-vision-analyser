@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Key, Check, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { Key, Check, Eye, EyeOff, ExternalLink, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { validateApiKey } from "@/lib/analysisEngine";
 
 interface ApiKeySetupProps {
   onSave: (key: string) => void;
@@ -10,13 +11,21 @@ interface ApiKeySetupProps {
 const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
   const [key, setKey] = useState(savedKey);
   const [show, setShow] = useState(false);
-  const [saved, setSaved] = useState(!!savedKey);
+  const [validating, setValidating] = useState(false);
+  const [status, setStatus] = useState<"idle" | "valid" | "invalid">(savedKey ? "valid" : "idle");
 
-  const handleSave = () => {
-    if (key.trim().length > 5) {
-      onSave(key.trim());
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+  const handleSave = async () => {
+    const trimmed = key.trim();
+    if (trimmed.length < 5) return;
+    setValidating(true);
+    setStatus("idle");
+    const valid = await validateApiKey(trimmed);
+    setValidating(false);
+    if (valid) {
+      setStatus("valid");
+      onSave(trimmed);
+    } else {
+      setStatus("invalid");
     }
   };
 
@@ -32,10 +41,10 @@ const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
           <Key className="w-4 h-4 text-primary" />
         </div>
         <div>
-          <h3 className="font-display text-sm font-semibold tracking-wider">TWELVEDATA API</h3>
-          <p className="text-xs text-muted-foreground font-mono">Market data engine</p>
+          <h3 className="font-display text-sm font-semibold tracking-wider">MARKET DATA API</h3>
+          <p className="text-xs text-muted-foreground font-mono">Real-time price engine</p>
         </div>
-        {savedKey && <div className="ml-auto pulse-dot" />}
+        {status === "valid" && <div className="ml-auto pulse-dot" />}
       </div>
 
       <div className="flex gap-2">
@@ -43,7 +52,7 @@ const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
           <input
             type={show ? "text" : "password"}
             value={key}
-            onChange={e => { setKey(e.target.value); setSaved(false); }}
+            onChange={e => { setKey(e.target.value); setStatus("idle"); }}
             placeholder="Enter API key..."
             className="w-full bg-muted/50 border border-border/50 rounded-md px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors"
           />
@@ -55,13 +64,29 @@ const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
-          className={`px-4 py-2 rounded-md font-display text-xs font-semibold tracking-wider transition-colors ${
-            saved ? "bg-accent text-accent-foreground" : "bg-primary text-primary-foreground hover:bg-primary/90"
+          disabled={validating || key.trim().length < 5}
+          className={`px-4 py-2 rounded-md font-display text-xs font-semibold tracking-wider transition-colors disabled:opacity-50 ${
+            status === "valid" ? "bg-accent text-accent-foreground"
+              : status === "invalid" ? "bg-destructive text-destructive-foreground"
+              : "bg-primary text-primary-foreground hover:bg-primary/90"
           }`}
         >
-          {saved ? <Check className="w-4 h-4" /> : "SAVE"}
+          {validating ? <Loader2 className="w-4 h-4 animate-spin" /> : status === "valid" ? <Check className="w-4 h-4" /> : "CONNECT"}
         </motion.button>
       </div>
+
+      {status === "invalid" && (
+        <motion.div className="flex items-center gap-2 mt-2 text-destructive" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <AlertCircle className="w-3 h-3" />
+          <span className="font-mono text-xs">Invalid API key. Please check and try again.</span>
+        </motion.div>
+      )}
+      {status === "valid" && (
+        <motion.div className="flex items-center gap-2 mt-2 text-accent" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <CheckCircle2 className="w-3 h-3" />
+          <span className="font-mono text-xs">Connected — real-time market data active</span>
+        </motion.div>
+      )}
 
       <a
         href="https://twelvedata.com/apikey"
