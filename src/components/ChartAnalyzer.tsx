@@ -1,84 +1,12 @@
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Camera, Loader2, Crosshair, X, ImageIcon } from "lucide-react";
+import { Upload, Loader2, Crosshair, X, ImageIcon } from "lucide-react";
 import SignalDisplay, { type Signal } from "./SignalDisplay";
+import { analyzeChartImage } from "@/lib/analysisEngine";
 
 interface ChartAnalyzerProps {
   apiKey: string;
 }
-
-const analyzeChart = async (imageBase64: string, _apiKey: string): Promise<Signal> => {
-  // Use TwelveData context + advanced chart pattern recognition
-  const res = await fetch("https://api.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${(window as any).__LOVABLE_API_KEY || ""}`,
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        {
-          role: "system",
-          content: `You are an elite Forex technical analyst with 20+ years experience. Analyze the chart screenshot with extreme precision.
-
-STRATEGY FRAMEWORK - Apply ALL that are relevant:
-1. SMART MONEY CONCEPTS: Order blocks, fair value gaps, liquidity sweeps, breaker blocks, mitigation blocks
-2. ICT METHODOLOGY: Optimal trade entry, institutional order flow, market structure shifts
-3. PRICE ACTION: Pin bars, engulfing patterns, inside bars, morning/evening stars, doji
-4. SUPPLY & DEMAND: Fresh zones, tested zones, rally-base-rally, drop-base-drop
-5. FIBONACCI: Key retracements (38.2%, 50%, 61.8%, 78.6%), extensions for TP
-6. INDICATORS: RSI divergence, MACD crossovers, EMA ribbons, Bollinger Bands, Volume profile
-7. HARMONIC PATTERNS: Gartley, Butterfly, Bat, Crab, Cypher
-8. ELLIOTT WAVE: Wave counts, corrective patterns
-9. WYCKOFF METHOD: Accumulation/distribution phases
-
-RULES:
-- Identify the pair and timeframe from the chart
-- Determine trend direction using multi-timeframe confluence
-- Find high-probability entry using confluence of 3+ strategies
-- Set SL below/above structure with buffer
-- Set 3 TPs using Fibonacci extensions and key levels
-- Calculate risk:reward ratio
-- Rate confidence 0-100 based on confluence strength
-
-Respond in VALID JSON ONLY with this exact structure:
-{
-  "pair": "EUR/USD",
-  "timeframe": "H4",
-  "direction": "BUY" or "SELL",
-  "entry": "1.0850",
-  "stopLoss": "1.0800",
-  "takeProfit1": "1.0920",
-  "takeProfit2": "1.0980",
-  "takeProfit3": "1.1050",
-  "riskReward": "1:3.2",
-  "confidence": 85,
-  "strategy": "Smart Money + ICT OTE",
-  "patterns": ["Bullish OB", "FVG", "CHoCH"],
-  "indicators": ["RSI Divergence", "EMA 200 Support"],
-  "analysis": "Detailed analysis text...",
-  "keyLevels": ["1.0800 Support", "1.0920 Resistance"]
-}`
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Analyze this forex chart with full professional strategy. Identify entry, SL, and 3 TPs." },
-            { type: "image_url", image_url: { url: imageBase64 } }
-          ]
-        }
-      ],
-      response_format: { type: "json_object" },
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Analysis failed: ${res.status}`);
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("No analysis received");
-  return JSON.parse(content);
-};
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
   const [image, setImage] = useState<string | null>(null);
@@ -104,7 +32,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
     setAnalyzing(true);
     setError("");
     try {
-      const result = await analyzeChart(image, apiKey);
+      const result = await analyzeChartImage({ imageData: image, apiKey });
       setSignal(result);
     } catch (err: any) {
       setError(err.message || "Analysis failed");
@@ -113,15 +41,10 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
     }
   };
 
-  const clearImage = () => {
-    setImage(null);
-    setSignal(null);
-    setError("");
-  };
+  const clearImage = () => { setImage(null); setSignal(null); setError(""); };
 
   return (
     <div className="space-y-4">
-      {/* Upload Area */}
       <motion.div
         className={`terminal-card p-6 border-2 border-dashed transition-colors cursor-pointer ${
           dragOver ? "border-primary bg-primary/5" : "border-border/30 hover:border-primary/40"
@@ -171,17 +94,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
                   disabled={analyzing}
                   className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-primary text-primary-foreground font-display text-sm font-semibold tracking-wider disabled:opacity-50 transition-all"
                 >
-                  {analyzing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      ANALYZING...
-                    </>
-                  ) : (
-                    <>
-                      <Crosshair className="w-4 h-4" />
-                      ANALYZE CHART
-                    </>
-                  )}
+                  {analyzing ? <><Loader2 className="w-4 h-4 animate-spin" />ANALYZING...</> : <><Crosshair className="w-4 h-4" />ANALYZE CHART</>}
                 </motion.button>
               </div>
             </motion.div>
@@ -189,56 +102,26 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         </AnimatePresence>
       </motion.div>
 
-      {/* Scanning animation */}
       <AnimatePresence>
         {analyzing && (
-          <motion.div
-            className="terminal-card p-6 overflow-hidden relative"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-          >
+          <motion.div className="terminal-card p-6 overflow-hidden relative" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
             <div className="flex items-center gap-3">
-              <motion.div
-                className="w-3 h-3 rounded-full bg-primary"
-                animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }}
-                transition={{ repeat: Infinity, duration: 1 }}
-              />
+              <motion.div className="w-3 h-3 rounded-full bg-primary" animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1 }} />
               <span className="font-display text-sm tracking-wider">SCANNING CHART PATTERNS...</span>
             </div>
             <div className="mt-4 space-y-2">
-              {["Identifying price action...", "Mapping support & resistance...", "Analyzing indicators...", "Detecting patterns...", "Calculating entry points..."].map((t, i) => (
-                <motion.div
-                  key={i}
-                  className="font-mono text-xs text-muted-foreground"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.6 }}
-                >
+              {["Identifying price action & candlestick patterns...", "Mapping support & resistance zones...", "Running Smart Money Concepts analysis...", "Calculating Fibonacci levels...", "Generating entry, SL & TP levels..."].map((t, i) => (
+                <motion.div key={i} className="font-mono text-xs text-muted-foreground" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.6 }}>
                   {">"} {t}
                 </motion.div>
               ))}
             </div>
-            <motion.div
-              className="absolute bottom-0 left-0 h-0.5 bg-primary"
-              initial={{ width: "0%" }}
-              animate={{ width: "100%" }}
-              transition={{ duration: 4, ease: "linear" }}
-            />
+            <motion.div className="absolute bottom-0 left-0 h-0.5 bg-primary" initial={{ width: "0%" }} animate={{ width: "100%" }} transition={{ duration: 4, ease: "linear" }} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {error && (
-        <motion.div
-          className="terminal-card p-4 border-destructive/30"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        >
-          <p className="font-mono text-sm text-destructive">{error}</p>
-        </motion.div>
-      )}
-
+      {error && <motion.div className="terminal-card p-4 border-destructive/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><p className="font-mono text-sm text-destructive">{error}</p></motion.div>}
       {signal && <SignalDisplay signal={signal} />}
     </div>
   );
