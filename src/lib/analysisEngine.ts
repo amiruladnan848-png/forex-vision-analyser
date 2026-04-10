@@ -1,4 +1,4 @@
-import { type Signal } from "./SignalDisplay";
+import { type Signal } from "@/components/SignalDisplay";
 
 // Professional Forex Chart Analysis Engine
 // Uses advanced pattern recognition and technical analysis logic
