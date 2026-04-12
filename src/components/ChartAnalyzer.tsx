@@ -9,10 +9,13 @@ interface ChartAnalyzerProps {
 }
 
 const TIMEFRAMES = ["1min", "5min", "15min", "30min", "1h", "4h", "1day", "1week"];
-const TIMEFRAME_LABELS: Record<string, string> = {
+const TF_LABELS: Record<string, string> = {
   "1min": "M1", "5min": "M5", "15min": "M15", "30min": "M30",
   "1h": "H1", "4h": "H4", "1day": "D1", "1week": "W1",
 };
+
+const forexPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "forex").map(([k]) => k);
+const cryptoPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "crypto").map(([k]) => k);
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
   const [image, setImage] = useState<string | null>(null);
@@ -22,6 +25,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
   const [dragOver, setDragOver] = useState(false);
   const [selectedPair, setSelectedPair] = useState("EUR/USD");
   const [selectedTimeframe, setSelectedTimeframe] = useState("1h");
+  const [marketTab, setMarketTab] = useState<"forex" | "crypto">("forex");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback((file: File) => {
@@ -40,12 +44,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
     setAnalyzing(true);
     setError("");
     try {
-      const result = await analyzeChartImage({
-        imageData: image,
-        apiKey,
-        pair: selectedPair,
-        timeframe: selectedTimeframe,
-      });
+      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe: selectedTimeframe });
       setSignal(result);
     } catch (err: any) {
       setError(err.message || "Analysis failed");
@@ -58,22 +57,40 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
   return (
     <div className="space-y-4">
+      {/* Market Type Tabs */}
+      <motion.div className="flex gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
+        {(["forex", "crypto"] as const).map(tab => (
+          <motion.button key={tab} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+            onClick={() => {
+              setMarketTab(tab);
+              setSelectedPair(tab === "forex" ? "EUR/USD" : "BTC/USD");
+              setSignal(null);
+            }}
+            className={`px-4 py-2 rounded-md font-display text-xs font-semibold tracking-widest transition-all ${
+              marketTab === tab
+                ? "bg-primary text-primary-foreground shadow-[0_0_15px_hsl(175_100%_45%/0.3)]"
+                : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {tab.toUpperCase()}
+          </motion.button>
+        ))}
+      </motion.div>
+
       {/* Pair & Timeframe Selector */}
-      <motion.div
-        className="terminal-card p-4 flex flex-wrap gap-3 items-center"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.2 }}
+      <motion.div className="terminal-card p-4 flex flex-wrap gap-3 items-end"
+        initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.2 }}
       >
-        <div className="flex-1 min-w-[180px]">
-          <label className="font-display text-[10px] tracking-widest text-muted-foreground mb-1 block">CURRENCY PAIR</label>
+        <div className="flex-1 min-w-[160px]">
+          <label className="font-display text-[10px] tracking-widest text-muted-foreground mb-1 block">
+            {marketTab === "forex" ? "CURRENCY PAIR" : "CRYPTO PAIR"}
+          </label>
           <div className="relative">
-            <select
-              value={selectedPair}
+            <select value={selectedPair}
               onChange={e => { setSelectedPair(e.target.value); setSignal(null); }}
               className="w-full bg-muted/50 border border-border/50 rounded-md px-3 py-2 font-mono text-sm text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/60 transition-colors"
             >
-              {Object.keys(PAIRS_MAP).map(pair => (
+              {(marketTab === "forex" ? forexPairs : cryptoPairs).map(pair => (
                 <option key={pair} value={pair}>{pair}</option>
               ))}
             </select>
@@ -84,17 +101,16 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
           <label className="font-display text-[10px] tracking-widest text-muted-foreground mb-1 block">TIMEFRAME</label>
           <div className="flex gap-1 flex-wrap">
             {TIMEFRAMES.map(tf => (
-              <button
-                key={tf}
+              <motion.button key={tf} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
                 onClick={() => { setSelectedTimeframe(tf); setSignal(null); }}
                 className={`px-2 py-1.5 rounded text-xs font-mono transition-all ${
                   selectedTimeframe === tf
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-primary text-primary-foreground shadow-[0_0_10px_hsl(175_100%_45%/0.25)]"
                     : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
               >
-                {TIMEFRAME_LABELS[tf]}
-              </button>
+                {TF_LABELS[tf]}
+              </motion.button>
             ))}
           </div>
         </div>
@@ -102,25 +118,21 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
       {/* Upload Area */}
       <motion.div
-        className={`terminal-card p-6 border-2 border-dashed transition-colors cursor-pointer ${
-          dragOver ? "border-primary bg-primary/5" : "border-border/30 hover:border-primary/40"
+        className={`terminal-card p-6 border-2 border-dashed transition-all duration-300 cursor-pointer ${
+          dragOver ? "border-primary bg-primary/5 shadow-[0_0_30px_hsl(175_100%_45%/0.15)]" : "border-border/30 hover:border-primary/40"
         }`}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.3 }}
+        initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.3 }}
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) processFile(f); }}
         onClick={() => !image && fileRef.current?.click()}
       >
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && processFile(e.target.files[0])} />
-        
         <AnimatePresence mode="wait">
           {!image ? (
             <motion.div key="upload" className="flex flex-col items-center gap-4 py-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <motion.div
-                className="w-16 h-16 rounded-full border-2 border-primary/30 flex items-center justify-center bg-primary/5"
-                animate={{ scale: [1, 1.05, 1] }}
+              <motion.div className="w-16 h-16 rounded-full border-2 border-primary/30 flex items-center justify-center bg-primary/5"
+                animate={{ scale: [1, 1.06, 1], boxShadow: ["0 0 0px hsl(175 100% 45% / 0)", "0 0 20px hsl(175 100% 45% / 0.2)", "0 0 0px hsl(175 100% 45% / 0)"] }}
                 transition={{ repeat: Infinity, duration: 3 }}
               >
                 <Upload className="w-8 h-8 text-primary" />
@@ -128,29 +140,30 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
               <div className="text-center">
                 <p className="font-display text-sm font-semibold tracking-wider">DROP CHART SCREENSHOT</p>
                 <p className="font-mono text-xs text-muted-foreground mt-1">or click to upload • PNG, JPG, WEBP</p>
-                <p className="font-mono text-[10px] text-muted-foreground/60 mt-2">Select your pair & timeframe above • Then upload chart</p>
+                <p className="font-mono text-[10px] text-muted-foreground/60 mt-2">Select pair & timeframe above • Supports Forex & Crypto</p>
               </div>
             </motion.div>
           ) : (
             <motion.div key="preview" className="relative" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-              <button onClick={(e) => { e.stopPropagation(); clearImage(); }} className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-background/80 border border-border/50 flex items-center justify-center hover:bg-destructive/20 transition-colors">
+              <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                onClick={(e) => { e.stopPropagation(); clearImage(); }}
+                className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-background/80 border border-border/50 flex items-center justify-center hover:bg-destructive/20 transition-colors"
+              >
                 <X className="w-4 h-4" />
-              </button>
+              </motion.button>
               <img src={image} alt="Chart" className="w-full rounded-md max-h-[400px] object-contain" />
               <div className="neon-line mt-3" />
               <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <ImageIcon className="w-4 h-4 text-primary" />
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {selectedPair} • {TIMEFRAME_LABELS[selectedTimeframe]} • Ready
-                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">{selectedPair} • {TF_LABELS[selectedTimeframe]} • Ready</span>
                 </div>
                 <motion.button
-                  whileHover={{ scale: 1.05, boxShadow: "0 0 20px hsl(175 100% 45% / 0.4)" }}
+                  whileHover={{ scale: 1.05, boxShadow: "0 0 25px hsl(175 100% 45% / 0.5)" }}
                   whileTap={{ scale: 0.95 }}
                   onClick={(e) => { e.stopPropagation(); handleAnalyze(); }}
                   disabled={analyzing}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-primary text-primary-foreground font-display text-sm font-semibold tracking-wider disabled:opacity-50 transition-all"
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-primary text-primary-foreground font-display text-sm font-semibold tracking-wider disabled:opacity-50 transition-all shadow-[0_0_15px_hsl(175_100%_45%/0.2)]"
                 >
                   {analyzing ? <><Loader2 className="w-4 h-4 animate-spin" />ANALYZING...</> : <><Crosshair className="w-4 h-4" />ANALYZE CHART</>}
                 </motion.button>
@@ -160,32 +173,38 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         </AnimatePresence>
       </motion.div>
 
+      {/* Analyzing State */}
       <AnimatePresence>
         {analyzing && (
           <motion.div className="terminal-card p-6 overflow-hidden relative" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
             <div className="flex items-center gap-3">
               <motion.div className="w-3 h-3 rounded-full bg-primary" animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1 }} />
-              <span className="font-display text-sm tracking-wider">ANALYZING {selectedPair} ({TIMEFRAME_LABELS[selectedTimeframe]})...</span>
+              <span className="font-display text-sm tracking-wider">ANALYZING {selectedPair} ({TF_LABELS[selectedTimeframe]})...</span>
             </div>
             <div className="mt-4 space-y-2">
               {[
-                `Fetching ${selectedPair} OHLC data...`,
-                "Computing RSI, MACD, Stochastic indicators...",
-                "Identifying candlestick patterns & market structure...",
-                "Running SMC + ICT + Fibonacci confluence analysis...",
-                "Calculating optimal Entry, SL & TP levels...",
+                `Fetching ${selectedPair} OHLC market data...`,
+                "Computing RSI, MACD, Stochastic, ADX, Bollinger Bands...",
+                "Detecting candlestick patterns & market structure...",
+                "Running 4-strategy confluence analysis (SMC, Fib, Wyckoff, Elliott)...",
+                "Calculating optimal Entry, SL & TP with ATR precision...",
+                "Drawing signal chart with level visualization...",
               ].map((t, i) => (
-                <motion.div key={i} className="font-mono text-xs text-muted-foreground" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.5 }}>
+                <motion.div key={i} className="font-mono text-xs text-muted-foreground" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.4 }}>
                   {">"} {t}
                 </motion.div>
               ))}
             </div>
-            <motion.div className="absolute bottom-0 left-0 h-0.5 bg-primary" initial={{ width: "0%" }} animate={{ width: "100%" }} transition={{ duration: 3, ease: "linear" }} />
+            <motion.div className="absolute bottom-0 left-0 h-0.5 bg-primary" initial={{ width: "0%" }} animate={{ width: "100%" }} transition={{ duration: 3.5, ease: "linear" }} />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {error && <motion.div className="terminal-card p-4 border-destructive/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><p className="font-mono text-sm text-destructive">{error}</p></motion.div>}
+      {error && (
+        <motion.div className="terminal-card p-4 border-destructive/30" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <p className="font-mono text-sm text-destructive">{error}</p>
+        </motion.div>
+      )}
       {signal && <SignalDisplay signal={signal} />}
     </div>
   );
