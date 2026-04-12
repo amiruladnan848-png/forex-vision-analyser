@@ -33,7 +33,7 @@ const Index = () => {
             {!apiKey ? (
               <div className="terminal-card p-12 text-center">
                 <div className="font-display text-sm tracking-wider text-muted-foreground">
-                  ⚡ SETUP TWELVEDATA API KEY TO ENABLE CHART ANALYSIS
+                  ⚡ SETUP API KEY TO ENABLE CHART ANALYSIS
                 </div>
               </div>
             ) : (
