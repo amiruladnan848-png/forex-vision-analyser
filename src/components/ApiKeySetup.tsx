@@ -94,7 +94,7 @@ const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
         rel="noopener noreferrer"
         className="flex items-center gap-1 mt-3 text-xs text-primary/70 hover:text-primary font-mono transition-colors"
       >
-        Get free API key <ExternalLink className="w-3 h-3" />
+        Get API key <ExternalLink className="w-3 h-3" />
       </a>
     </motion.div>
   );
