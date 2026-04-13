@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap, Activity, Download } from "lucide-react";
-import React, { useRef, useCallback } from "react";
+import React, { useRef, useCallback, useState } from "react";
 import type { OHLC } from "@/lib/analysisEngine";
 
 export interface Signal {
@@ -25,74 +25,306 @@ export interface Signal {
   bbLower?: number;
   bbMiddle?: number;
   adx?: number;
+  imageData?: string;
+  fibLevels?: Record<string, number>;
+  support?: number;
+  resistance?: number;
+  ema8?: number;
+  ema21?: number;
 }
 
 interface SignalDisplayProps {
   signal: Signal;
 }
 
-const LevelLine = ({ y, w, pad, color, label, price, dash }: { y: number; w: number; pad: number; color: string; label: string; price: string; dash: string }) => (
-  <g>
-    <line x1={pad} x2={w - pad} y1={y} y2={y} stroke={color} strokeWidth={1.2} strokeDasharray={dash} />
-    {/* Label badge on right */}
-    <rect x={w - pad - 30} y={y - 8} width={30} height={16} fill={color} rx={3} opacity={0.9} />
-    <text x={w - pad - 15} y={y + 4} textAnchor="middle" fill="hsl(220 20% 4%)" fontSize={7.5} fontFamily="monospace" fontWeight="bold">{label}</text>
-    {/* Price badge on left */}
-    <rect x={pad} y={y - 8} width={58} height={16} fill="hsl(220 20% 8% / 0.9)" rx={3} stroke={color} strokeWidth={0.6} />
-    <text x={pad + 29} y={y + 4} textAnchor="middle" fill={color} fontSize={7} fontFamily="monospace" fontWeight="600">{price}</text>
-  </g>
-);
-
+/* ─── Chart drawn ON the user's screenshot ─── */
 const SignalChart = ({ signal }: { signal: Signal }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const candles = signal.candles;
-  const hasCandles = candles && candles.length >= 5;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const hasImage = !!signal.imageData;
+  const hasCandles = signal.candles && signal.candles.length >= 5;
 
-  const handleDownload = useCallback(() => {
-    if (!svgRef.current) return;
-    const svgData = new XMLSerializer().serializeToString(svgRef.current);
-    const canvas = document.createElement("canvas");
+  const draw = useCallback((img: HTMLImageElement | null) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const img = new Image();
-    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-    img.onload = () => {
-      canvas.width = 560 * 2;
-      canvas.height = 280 * 2;
-      ctx.scale(2, 2);
+
+    const W = 800, H = 450;
+    canvas.width = W * 2;
+    canvas.height = H * 2;
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    ctx.scale(2, 2);
+
+    // Draw screenshot as background
+    if (img) {
+      ctx.drawImage(img, 0, 0, W, H);
+      // Semi-transparent overlay for readability
+      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      ctx.fillRect(0, 0, W, H);
+    } else {
       ctx.fillStyle = "#0a0e14";
-      ctx.fillRect(0, 0, 560, 280);
-      ctx.drawImage(img, 0, 0, 560, 280);
-      URL.revokeObjectURL(url);
-      const link = document.createElement("a");
-      link.download = `${signal.pair.replace("/", "-")}_${signal.timeframe}_${signal.direction}_signal.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (!hasCandles || !signal.candles) { setLoaded(true); return; }
+
+    const candles = [...signal.candles].reverse().slice(-40);
+    const entry = parseFloat(signal.entry);
+    const sl = parseFloat(signal.stopLoss);
+    const tp1 = parseFloat(signal.takeProfit1);
+    const tp2 = parseFloat(signal.takeProfit2);
+    const tp3 = parseFloat(signal.takeProfit3);
+
+    const allPrices = [
+      ...candles.map(c => c.high), ...candles.map(c => c.low),
+      entry, sl, tp1, tp2, tp3,
+      signal.bbUpper || 0, signal.bbLower || Infinity,
+      signal.support || Infinity, signal.resistance || 0,
+    ].filter(v => v > 0 && v < Infinity);
+
+    const minP = Math.min(...allPrices);
+    const maxP = Math.max(...allPrices);
+    const range = maxP - minP || 1;
+    const padL = 70, padR = 80, padT = 35, padB = 25;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+
+    const yScale = (price: number) => padT + chartH - ((price - minP) / range) * chartH;
+    const isBuy = signal.direction === "BUY";
+
+    // ── Grid lines ──
+    ctx.strokeStyle = "rgba(100,200,220,0.08)";
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 5; i++) {
+      const y = padT + (chartH / 5) * i;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      const price = maxP - (range / 5) * i;
+      ctx.fillStyle = "rgba(180,200,210,0.5)";
+      ctx.font = "9px monospace";
+      ctx.textAlign = "right";
+      ctx.fillText(price.toFixed(signal.entry.includes(".") ? signal.entry.split(".")[1].length : 2), padL - 5, y + 3);
+    }
+
+    // ── Support & Resistance zones ──
+    if (signal.support) {
+      const sy = yScale(signal.support);
+      ctx.fillStyle = "rgba(0,200,120,0.08)";
+      ctx.fillRect(padL, sy - 4, chartW, 8);
+      ctx.strokeStyle = "rgba(0,200,120,0.5)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, sy); ctx.lineTo(W - padR, sy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(0,200,120,0.8)";
+      ctx.font = "bold 8px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`S: ${signal.support.toFixed(2)}`, padL + 3, sy - 6);
+    }
+    if (signal.resistance) {
+      const ry = yScale(signal.resistance);
+      ctx.fillStyle = "rgba(255,80,80,0.08)";
+      ctx.fillRect(padL, ry - 4, chartW, 8);
+      ctx.strokeStyle = "rgba(255,80,80,0.5)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(padL, ry); ctx.lineTo(W - padR, ry); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(255,80,80,0.8)";
+      ctx.font = "bold 8px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`R: ${signal.resistance.toFixed(2)}`, padL + 3, ry - 6);
+    }
+
+    // ── Fibonacci levels ──
+    if (signal.fibLevels) {
+      const fibColors: Record<string, string> = {
+        "23.6%": "rgba(255,215,0,0.35)", "38.2%": "rgba(255,200,0,0.45)",
+        "50.0%": "rgba(255,180,0,0.5)", "61.8%": "rgba(255,160,0,0.6)",
+        "78.6%": "rgba(255,140,0,0.4)",
+      };
+      Object.entries(signal.fibLevels).forEach(([label, price]) => {
+        if (label.startsWith("ext")) return;
+        const fy = yScale(price);
+        if (fy < padT || fy > H - padB) return;
+        ctx.strokeStyle = fibColors[label] || "rgba(255,200,0,0.3)";
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([3, 5]);
+        ctx.beginPath(); ctx.moveTo(padL, fy); ctx.lineTo(W - padR, fy); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = fibColors[label] || "rgba(255,200,0,0.6)";
+        ctx.font = "7px monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(`Fib ${label}`, W - padR - 3, fy - 3);
+      });
+    }
+
+    // ── Bollinger Bands ──
+    if (signal.bbUpper && signal.bbLower) {
+      [signal.bbUpper, signal.bbLower, signal.bbMiddle].forEach((val, idx) => {
+        if (!val) return;
+        const by = yScale(val);
+        ctx.strokeStyle = idx === 2 ? "rgba(255,215,0,0.2)" : "rgba(255,215,0,0.35)";
+        ctx.lineWidth = idx === 2 ? 0.6 : 0.9;
+        ctx.setLineDash(idx === 2 ? [2, 4] : [4, 4]);
+        ctx.beginPath(); ctx.moveTo(padL, by); ctx.lineTo(W - padR, by); ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      // Fill BB band area
+      const bbTopY = yScale(signal.bbUpper);
+      const bbBotY = yScale(signal.bbLower);
+      ctx.fillStyle = "rgba(255,215,0,0.04)";
+      ctx.fillRect(padL, bbTopY, chartW, bbBotY - bbTopY);
+    }
+
+    // ── Candlesticks ──
+    const cW = Math.max(3, chartW / candles.length - 1.5);
+    candles.forEach((c, i) => {
+      const x = padL + i * (chartW / candles.length) + 1;
+      const bull = c.close >= c.open;
+      const bodyTop = yScale(Math.max(c.open, c.close));
+      const bodyBot = yScale(Math.min(c.open, c.close));
+      const bH = Math.max(1, bodyBot - bodyTop);
+      // Wick
+      ctx.strokeStyle = bull ? "rgba(0,210,130,0.7)" : "rgba(255,70,70,0.7)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + cW / 2, yScale(c.high)); ctx.lineTo(x + cW / 2, yScale(c.low)); ctx.stroke();
+      // Body
+      ctx.fillStyle = bull ? "rgba(0,210,130,0.85)" : "rgba(255,70,70,0.85)";
+      ctx.fillRect(x, bodyTop, cW * 0.8, bH);
+    });
+
+    // ── EMA trend lines ──
+    if (signal.ema8 && signal.ema21) {
+      // Draw simple trend arrow based on EMAs
+      const lastX = padL + chartW - 20;
+      const ema8Y = yScale(signal.ema8);
+      const ema21Y = yScale(signal.ema21);
+      ctx.strokeStyle = "rgba(0,200,255,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(lastX - 60, ema8Y + (signal.ema8 > signal.ema21 ? 5 : -5)); ctx.lineTo(lastX, ema8Y); ctx.stroke();
+      ctx.strokeStyle = "rgba(255,165,0,0.5)";
+      ctx.beginPath(); ctx.moveTo(lastX - 60, ema21Y + (signal.ema8 > signal.ema21 ? 5 : -5)); ctx.lineTo(lastX, ema21Y); ctx.stroke();
+    }
+
+    // ── TP Zones (shaded) ──
+    const entryY = yScale(entry);
+    const tp3Y = yScale(tp3);
+    const slY = yScale(sl);
+    ctx.fillStyle = isBuy ? "rgba(0,210,130,0.07)" : "rgba(255,70,70,0.07)";
+    ctx.fillRect(padL, Math.min(entryY, tp3Y), chartW, Math.abs(tp3Y - entryY));
+    ctx.fillStyle = "rgba(255,50,50,0.07)";
+    ctx.fillRect(padL, Math.min(entryY, slY), chartW, Math.abs(slY - entryY));
+
+    // ── Signal levels ──
+    const drawLevel = (price: number, label: string, color: string, dash: number[]) => {
+      const y = yScale(price);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash(dash);
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Price badge right
+      const priceStr = price.toFixed(signal.entry.includes(".") ? signal.entry.split(".")[1].length : 2);
+      ctx.fillStyle = color;
+      ctx.fillRect(W - padR + 2, y - 9, padR - 6, 18);
+      ctx.fillStyle = "#0a0e14";
+      ctx.font = "bold 9px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(priceStr, W - padR + 2 + (padR - 6) / 2, y + 3);
+
+      // Label badge left
+      ctx.fillStyle = color;
+      const lw = ctx.measureText(label).width + 10;
+      ctx.fillRect(padL, y - 9, lw, 18);
+      ctx.fillStyle = "#0a0e14";
+      ctx.font = "bold 8px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(label, padL + 5, y + 3);
     };
-    img.src = url;
+
+    drawLevel(entry, "ENTRY", "rgb(0,220,200)", []);
+    drawLevel(sl, "SL", "rgb(255,60,60)", [5, 3]);
+    drawLevel(tp1, "TP1", "rgba(0,200,120,0.7)", [4, 3]);
+    drawLevel(tp2, "TP2", "rgba(0,210,130,0.85)", [4, 3]);
+    drawLevel(tp3, "TP3", "rgb(0,220,140)", [4, 3]);
+
+    // ── Direction arrow ──
+    const arrowX = W - padR - 25;
+    const arrowLen = 40;
+    const arrowEndY = isBuy ? entryY - arrowLen : entryY + arrowLen;
+    ctx.strokeStyle = isBuy ? "rgb(0,220,140)" : "rgb(255,60,60)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(arrowX, entryY); ctx.lineTo(arrowX, arrowEndY); ctx.stroke();
+    ctx.fillStyle = isBuy ? "rgb(0,220,140)" : "rgb(255,60,60)";
+    ctx.beginPath();
+    if (isBuy) {
+      ctx.moveTo(arrowX - 7, arrowEndY + 10); ctx.lineTo(arrowX, arrowEndY); ctx.lineTo(arrowX + 7, arrowEndY + 10);
+    } else {
+      ctx.moveTo(arrowX - 7, arrowEndY - 10); ctx.lineTo(arrowX, arrowEndY); ctx.lineTo(arrowX + 7, arrowEndY - 10);
+    }
+    ctx.fill();
+
+    // ── Title bar ──
+    ctx.fillStyle = "rgba(10,14,20,0.75)";
+    ctx.fillRect(0, 0, W, 28);
+    ctx.fillStyle = "rgb(0,220,200)";
+    ctx.font = "bold 11px monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(`${signal.pair} • ${signal.timeframe}`, 10, 18);
+    ctx.fillStyle = isBuy ? "rgb(0,220,140)" : "rgb(255,60,60)";
+    const dirW = ctx.measureText(signal.direction).width + 14;
+    ctx.fillRect(W / 2 - dirW / 2, 5, dirW, 18);
+    ctx.fillStyle = "#0a0e14";
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(signal.direction, W / 2, 18);
+
+    // Strategy label
+    ctx.fillStyle = "rgba(180,220,255,0.5)";
+    ctx.font = "9px monospace";
+    ctx.textAlign = "right";
+    ctx.fillText(signal.strategy, W - 10, 18);
+
+    // ── Confidence badge bottom ──
+    ctx.fillStyle = "rgba(10,14,20,0.75)";
+    ctx.fillRect(0, H - 22, W, 22);
+    ctx.fillStyle = "rgba(180,200,210,0.6)";
+    ctx.font = "8px monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(`Confidence: ${signal.confidence}%  |  R:R ${signal.riskReward}  |  ${signal.trend || ""}  |  FOREX-VISION`, 10, H - 7);
+
+    setLoaded(true);
+  }, [signal, hasCandles]);
+
+  // Load image and draw
+  const initDraw = useCallback(() => {
+    if (signal.imageData) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => draw(img);
+      img.onerror = () => draw(null);
+      img.src = signal.imageData;
+    } else {
+      draw(null);
+    }
+  }, [signal.imageData, draw]);
+
+  React.useEffect(() => { initDraw(); }, [initDraw]);
+
+  const handleDownload = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `${signal.pair.replace("/", "-")}_${signal.timeframe}_${signal.direction}_signal.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
   }, [signal]);
 
-  if (!hasCandles) return null;
-
-  const displayCandles = [...candles].reverse().slice(-30);
-  const allHighs = displayCandles.map(c => c.high);
-  const allLows = displayCandles.map(c => c.low);
-  const entry = parseFloat(signal.entry);
-  const sl = parseFloat(signal.stopLoss);
-  const tp1 = parseFloat(signal.takeProfit1);
-  const tp2 = parseFloat(signal.takeProfit2);
-  const tp3 = parseFloat(signal.takeProfit3);
-
-  const minP = Math.min(...allLows, sl, signal.direction === "SELL" ? tp3 : sl);
-  const maxP = Math.max(...allHighs, tp3, signal.direction === "BUY" ? tp3 : sl);
-  const range = maxP - minP || 1;
-  const W = 560, H = 280, pad = 68;
-  const chartW = W - pad - 10, chartH = H - 20;
-  const candleW = Math.max(2, chartW / displayCandles.length - 1);
-
-  const yScale = (price: number) => 10 + chartH - ((price - minP) / range) * chartH;
-
+  if (!hasImage && !hasCandles) return null;
 
   return (
     <motion.div
@@ -115,74 +347,11 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
           <Download className="w-3.5 h-3.5 text-primary" />
         </motion.button>
       </div>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ minHeight: 220 }}>
-        <rect width={W} height={H} fill="hsl(220 20% 4%)" rx={6} />
-        {/* Grid lines */}
-        {[0.2, 0.4, 0.6, 0.8].map(pct => (
-          <line key={pct} x1={pad} x2={W - 10} y1={10 + chartH * pct} y2={10 + chartH * pct} stroke="hsl(180 60% 20% / 0.12)" strokeDasharray="3,3" />
-        ))}
-
-        {/* TP zone */}
-        <rect x={pad} y={Math.min(yScale(tp3), yScale(entry))} width={chartW} height={Math.abs(yScale(tp3) - yScale(entry))} fill={signal.direction === "BUY" ? "hsl(145 80% 45% / 0.06)" : "hsl(0 85% 55% / 0.06)"} />
-        {/* SL zone */}
-        <rect x={pad} y={Math.min(yScale(sl), yScale(entry))} width={chartW} height={Math.abs(yScale(sl) - yScale(entry))} fill="hsl(0 85% 55% / 0.08)" />
-
-        {/* Candlesticks */}
-        {displayCandles.map((c, i) => {
-          const x = pad + i * (chartW / displayCandles.length) + candleW * 0.1;
-          const isBull = c.close >= c.open;
-          const bodyTop = yScale(Math.max(c.open, c.close));
-          const bodyBot = yScale(Math.min(c.open, c.close));
-          const bodyH = Math.max(1, bodyBot - bodyTop);
-          return (
-            <g key={i}>
-              <line x1={x + candleW / 2} x2={x + candleW / 2} y1={yScale(c.high)} y2={yScale(c.low)} stroke={isBull ? "hsl(145 80% 45% / 0.7)" : "hsl(0 85% 55% / 0.7)"} strokeWidth={1} />
-              <rect x={x} y={bodyTop} width={candleW * 0.8} height={bodyH} fill={isBull ? "hsl(145 80% 45% / 0.85)" : "hsl(0 85% 55% / 0.85)"} rx={0.5} />
-            </g>
-          );
-        })}
-
-        {/* Direction arrow */}
-        {(() => {
-          const lastX = pad + (displayCandles.length - 1) * (chartW / displayCandles.length) + candleW;
-          const arrowY = yScale(entry);
-          const isBuy = signal.direction === "BUY";
-          const arrowLen = 30;
-          const endY = isBuy ? arrowY - arrowLen : arrowY + arrowLen;
-          return (
-            <g>
-              <line x1={lastX + 12} x2={lastX + 12} y1={arrowY} y2={endY} stroke={isBuy ? "hsl(145 80% 50%)" : "hsl(0 85% 55%)"} strokeWidth={2.5} />
-              <polygon
-                points={isBuy
-                  ? `${lastX + 6},${endY + 8} ${lastX + 12},${endY} ${lastX + 18},${endY + 8}`
-                  : `${lastX + 6},${endY - 8} ${lastX + 12},${endY} ${lastX + 18},${endY - 8}`}
-                fill={isBuy ? "hsl(145 80% 50%)" : "hsl(0 85% 55%)"}
-              />
-            </g>
-          );
-        })()}
-
-        {/* Level lines with prices */}
-        <LevelLine y={yScale(entry)} w={W} pad={pad} color="hsl(175 100% 45%)" label="ENTRY" price={signal.entry} dash="" />
-        <LevelLine y={yScale(sl)} w={W} pad={pad} color="hsl(0 85% 55%)" label="SL" price={signal.stopLoss} dash="4,3" />
-        <LevelLine y={yScale(tp1)} w={W} pad={pad} color="hsl(145 80% 45% / 0.6)" label="TP1" price={signal.takeProfit1} dash="4,3" />
-        <LevelLine y={yScale(tp2)} w={W} pad={pad} color="hsl(145 80% 45% / 0.8)" label="TP2" price={signal.takeProfit2} dash="4,3" />
-        <LevelLine y={yScale(tp3)} w={W} pad={pad} color="hsl(145 80% 45%)" label="TP3" price={signal.takeProfit3} dash="4,3" />
-
-        {/* Bollinger Bands */}
-        {signal.bbUpper && signal.bbLower && (
-          <>
-            <line x1={pad} x2={W - 10} y1={yScale(signal.bbUpper)} y2={yScale(signal.bbUpper)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
-            <line x1={pad} x2={W - 10} y1={yScale(signal.bbLower)} y2={yScale(signal.bbLower)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
-            {signal.bbMiddle && <line x1={pad} x2={W - 10} y1={yScale(signal.bbMiddle)} y2={yScale(signal.bbMiddle)} stroke="hsl(45 100% 50% / 0.2)" strokeDasharray="1,3" strokeWidth={0.5} />}
-          </>
-        )}
-
-        {/* Pair & Direction label */}
-        <text x={pad + 4} y={22} fill="hsl(180 100% 95%)" fontSize={10} fontFamily="monospace" fontWeight="bold">{signal.pair} • {signal.timeframe}</text>
-        <rect x={pad + 4} y={28} width={32} height={14} fill={signal.direction === "BUY" ? "hsl(145 80% 45%)" : "hsl(0 85% 55%)"} rx={3} />
-        <text x={pad + 20} y={39} textAnchor="middle" fill="hsl(220 20% 4%)" fontSize={8} fontFamily="monospace" fontWeight="bold">{signal.direction}</text>
-      </svg>
+      <canvas
+        ref={canvasRef}
+        className={`w-full h-auto rounded-md transition-opacity duration-500 ${loaded ? "opacity-100" : "opacity-0"}`}
+        style={{ maxHeight: 450 }}
+      />
     </motion.div>
   );
 };
@@ -221,9 +390,7 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
                 {signal.trend && (
                   <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
                     signal.trend === "BULLISH" ? "bg-buy/10 text-buy" : signal.trend === "BEARISH" ? "bg-sell/10 text-sell" : "bg-warning/10 text-warning"
-                  }`}>
-                    {signal.trend}
-                  </span>
+                  }`}>{signal.trend}</span>
                 )}
               </div>
             </div>
