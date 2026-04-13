@@ -46,7 +46,34 @@ const LevelLine = ({ y, w, pad, color, label, price, dash }: { y: number; w: num
 const SignalChart = ({ signal }: { signal: Signal }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const candles = signal.candles;
-  if (!candles || candles.length < 5) return null;
+  const hasCandles = candles && candles.length >= 5;
+
+  const handleDownload = useCallback(() => {
+    if (!svgRef.current) return;
+    const svgData = new XMLSerializer().serializeToString(svgRef.current);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const img = new Image();
+    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    img.onload = () => {
+      canvas.width = 560 * 2;
+      canvas.height = 280 * 2;
+      ctx.scale(2, 2);
+      ctx.fillStyle = "#0a0e14";
+      ctx.fillRect(0, 0, 560, 280);
+      ctx.drawImage(img, 0, 0, 560, 280);
+      URL.revokeObjectURL(url);
+      const link = document.createElement("a");
+      link.download = `${signal.pair.replace("/", "-")}_${signal.timeframe}_${signal.direction}_signal.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    };
+    img.src = url;
+  }, [signal]);
+
+  if (!hasCandles) return null;
 
   const displayCandles = [...candles].reverse().slice(-30);
   const allHighs = displayCandles.map(c => c.high);
