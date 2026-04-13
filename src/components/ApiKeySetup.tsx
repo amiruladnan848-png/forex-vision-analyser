@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Key, Check, Eye, EyeOff, ExternalLink, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Key, Check, Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { validateApiKey } from "@/lib/analysisEngine";
 
 interface ApiKeySetupProps {
@@ -87,15 +87,6 @@ const ApiKeySetup = ({ onSave, savedKey }: ApiKeySetupProps) => {
           <span className="font-mono text-xs">Connected — real-time market data active</span>
         </motion.div>
       )}
-
-      <a
-        href="https://twelvedata.com/apikey"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-center gap-1 mt-3 text-xs text-primary/70 hover:text-primary font-mono transition-colors"
-      >
-        Get API key <ExternalLink className="w-3 h-3" />
-      </a>
     </motion.div>
   );
 };

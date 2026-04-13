@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Activity, Radio } from "lucide-react";
+import ThemeToggle from "./ThemeToggle";
 
 const Header = () => (
   <motion.header
@@ -22,9 +23,12 @@ const Header = () => (
           <p className="font-mono text-[10px] text-muted-foreground tracking-widest">AI CHART ANALYSIS SYSTEM</p>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <Radio className="w-3 h-3 text-accent animate-pulse" />
-        <span className="font-mono text-[10px] text-accent tracking-wider">LIVE</span>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Radio className="w-3 h-3 text-accent animate-pulse" />
+          <span className="font-mono text-[10px] text-accent tracking-wider">LIVE</span>
+        </div>
+        <ThemeToggle />
       </div>
     </div>
   </motion.header>
