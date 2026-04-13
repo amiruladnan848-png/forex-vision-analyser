@@ -93,30 +93,6 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
 
   const yScale = (price: number) => 10 + chartH - ((price - minP) / range) * chartH;
 
-  const handleDownload = useCallback(() => {
-    if (!svgRef.current) return;
-    const svgData = new XMLSerializer().serializeToString(svgRef.current);
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const img = new Image();
-    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-    img.onload = () => {
-      canvas.width = W * 2;
-      canvas.height = H * 2;
-      ctx.scale(2, 2);
-      ctx.fillStyle = "#0a0e14";
-      ctx.fillRect(0, 0, W, H);
-      ctx.drawImage(img, 0, 0, W, H);
-      URL.revokeObjectURL(url);
-      const link = document.createElement("a");
-      link.download = `${signal.pair.replace("/", "-")}_${signal.timeframe}_${signal.direction}_signal.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    };
-    img.src = url;
-  }, [signal]);
 
   return (
     <motion.div
