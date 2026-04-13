@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap, Activity } from "lucide-react";
-import React from "react";
+import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap, Activity, Download } from "lucide-react";
+import React, { useRef, useCallback } from "react";
 import type { OHLC } from "@/lib/analysisEngine";
 
 export interface Signal {
@@ -31,8 +31,20 @@ interface SignalDisplayProps {
   signal: Signal;
 }
 
-// Mini chart drawn with SVG from real candle data
+const LevelLine = ({ y, w, pad, color, label, price, dash }: { y: number; w: number; pad: number; color: string; label: string; price: string; dash: string }) => (
+  <g>
+    <line x1={pad} x2={w - pad} y1={y} y2={y} stroke={color} strokeWidth={1.2} strokeDasharray={dash} />
+    {/* Label badge on right */}
+    <rect x={w - pad - 30} y={y - 8} width={30} height={16} fill={color} rx={3} opacity={0.9} />
+    <text x={w - pad - 15} y={y + 4} textAnchor="middle" fill="hsl(220 20% 4%)" fontSize={7.5} fontFamily="monospace" fontWeight="bold">{label}</text>
+    {/* Price badge on left */}
+    <rect x={pad} y={y - 8} width={58} height={16} fill="hsl(220 20% 8% / 0.9)" rx={3} stroke={color} strokeWidth={0.6} />
+    <text x={pad + 29} y={y + 4} textAnchor="middle" fill={color} fontSize={7} fontFamily="monospace" fontWeight="600">{price}</text>
+  </g>
+);
+
 const SignalChart = ({ signal }: { signal: Signal }) => {
+  const svgRef = useRef<SVGSVGElement>(null);
   const candles = signal.candles;
   if (!candles || candles.length < 5) return null;
 
@@ -48,11 +60,36 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
   const minP = Math.min(...allLows, sl, signal.direction === "SELL" ? tp3 : sl);
   const maxP = Math.max(...allHighs, tp3, signal.direction === "BUY" ? tp3 : sl);
   const range = maxP - minP || 1;
-  const W = 500, H = 220, pad = 10;
-  const chartW = W - pad * 2, chartH = H - pad * 2;
+  const W = 560, H = 280, pad = 68;
+  const chartW = W - pad - 10, chartH = H - 20;
   const candleW = Math.max(2, chartW / displayCandles.length - 1);
 
-  const yScale = (price: number) => pad + chartH - ((price - minP) / range) * chartH;
+  const yScale = (price: number) => 10 + chartH - ((price - minP) / range) * chartH;
+
+  const handleDownload = useCallback(() => {
+    if (!svgRef.current) return;
+    const svgData = new XMLSerializer().serializeToString(svgRef.current);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const img = new Image();
+    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    img.onload = () => {
+      canvas.width = W * 2;
+      canvas.height = H * 2;
+      ctx.scale(2, 2);
+      ctx.fillStyle = "#0a0e14";
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(url);
+      const link = document.createElement("a");
+      link.download = `${signal.pair.replace("/", "-")}_${signal.timeframe}_${signal.direction}_signal.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    };
+    img.src = url;
+  }, [signal]);
 
   return (
     <motion.div
@@ -65,16 +102,25 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
         <Activity className="w-3 h-3 text-primary" />
         <span className="font-display text-[10px] font-semibold tracking-wider text-muted-foreground">SIGNAL CHART</span>
         <span className="font-mono text-[10px] text-primary ml-auto">{signal.pair} {signal.timeframe}</span>
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={handleDownload}
+          className="ml-2 p-1.5 rounded-md border border-border/40 bg-muted/30 hover:bg-primary/10 hover:border-primary/40 transition-all"
+          title="Download chart image"
+        >
+          <Download className="w-3.5 h-3.5 text-primary" />
+        </motion.button>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ minHeight: 180 }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ minHeight: 220 }}>
+        <rect width={W} height={H} fill="hsl(220 20% 4%)" rx={6} />
         {/* Grid lines */}
-        {[0.25, 0.5, 0.75].map(pct => (
-          <line key={pct} x1={pad} x2={W - pad} y1={pad + chartH * pct} y2={pad + chartH * pct} stroke="hsl(180 60% 20% / 0.15)" strokeDasharray="3,3" />
+        {[0.2, 0.4, 0.6, 0.8].map(pct => (
+          <line key={pct} x1={pad} x2={W - 10} y1={10 + chartH * pct} y2={10 + chartH * pct} stroke="hsl(180 60% 20% / 0.12)" strokeDasharray="3,3" />
         ))}
 
-        {/* TP3 zone */}
+        {/* TP zone */}
         <rect x={pad} y={Math.min(yScale(tp3), yScale(entry))} width={chartW} height={Math.abs(yScale(tp3) - yScale(entry))} fill={signal.direction === "BUY" ? "hsl(145 80% 45% / 0.06)" : "hsl(0 85% 55% / 0.06)"} />
-
         {/* SL zone */}
         <rect x={pad} y={Math.min(yScale(sl), yScale(entry))} width={chartW} height={Math.abs(yScale(sl) - yScale(entry))} fill="hsl(0 85% 55% / 0.08)" />
 
@@ -88,38 +134,55 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
           return (
             <g key={i}>
               <line x1={x + candleW / 2} x2={x + candleW / 2} y1={yScale(c.high)} y2={yScale(c.low)} stroke={isBull ? "hsl(145 80% 45% / 0.7)" : "hsl(0 85% 55% / 0.7)"} strokeWidth={1} />
-              <rect x={x} y={bodyTop} width={candleW * 0.8} height={bodyH} fill={isBull ? "hsl(145 80% 45% / 0.8)" : "hsl(0 85% 55% / 0.8)"} rx={0.5} />
+              <rect x={x} y={bodyTop} width={candleW * 0.8} height={bodyH} fill={isBull ? "hsl(145 80% 45% / 0.85)" : "hsl(0 85% 55% / 0.85)"} rx={0.5} />
             </g>
           );
         })}
 
-        {/* Level lines */}
-        <LevelLine y={yScale(entry)} w={W} pad={pad} color="hsl(175 100% 45%)" label="ENTRY" dash="" />
-        <LevelLine y={yScale(sl)} w={W} pad={pad} color="hsl(0 85% 55%)" label="SL" dash="4,3" />
-        <LevelLine y={yScale(tp1)} w={W} pad={pad} color="hsl(145 80% 45% / 0.6)" label="TP1" dash="4,3" />
-        <LevelLine y={yScale(tp2)} w={W} pad={pad} color="hsl(145 80% 45% / 0.8)" label="TP2" dash="4,3" />
-        <LevelLine y={yScale(tp3)} w={W} pad={pad} color="hsl(145 80% 45%)" label="TP3" dash="4,3" />
+        {/* Direction arrow */}
+        {(() => {
+          const lastX = pad + (displayCandles.length - 1) * (chartW / displayCandles.length) + candleW;
+          const arrowY = yScale(entry);
+          const isBuy = signal.direction === "BUY";
+          const arrowLen = 30;
+          const endY = isBuy ? arrowY - arrowLen : arrowY + arrowLen;
+          return (
+            <g>
+              <line x1={lastX + 12} x2={lastX + 12} y1={arrowY} y2={endY} stroke={isBuy ? "hsl(145 80% 50%)" : "hsl(0 85% 55%)"} strokeWidth={2.5} />
+              <polygon
+                points={isBuy
+                  ? `${lastX + 6},${endY + 8} ${lastX + 12},${endY} ${lastX + 18},${endY + 8}`
+                  : `${lastX + 6},${endY - 8} ${lastX + 12},${endY} ${lastX + 18},${endY - 8}`}
+                fill={isBuy ? "hsl(145 80% 50%)" : "hsl(0 85% 55%)"}
+              />
+            </g>
+          );
+        })()}
+
+        {/* Level lines with prices */}
+        <LevelLine y={yScale(entry)} w={W} pad={pad} color="hsl(175 100% 45%)" label="ENTRY" price={signal.entry} dash="" />
+        <LevelLine y={yScale(sl)} w={W} pad={pad} color="hsl(0 85% 55%)" label="SL" price={signal.stopLoss} dash="4,3" />
+        <LevelLine y={yScale(tp1)} w={W} pad={pad} color="hsl(145 80% 45% / 0.6)" label="TP1" price={signal.takeProfit1} dash="4,3" />
+        <LevelLine y={yScale(tp2)} w={W} pad={pad} color="hsl(145 80% 45% / 0.8)" label="TP2" price={signal.takeProfit2} dash="4,3" />
+        <LevelLine y={yScale(tp3)} w={W} pad={pad} color="hsl(145 80% 45%)" label="TP3" price={signal.takeProfit3} dash="4,3" />
 
         {/* Bollinger Bands */}
         {signal.bbUpper && signal.bbLower && (
           <>
-            <line x1={pad} x2={W - pad} y1={yScale(signal.bbUpper)} y2={yScale(signal.bbUpper)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
-            <line x1={pad} x2={W - pad} y1={yScale(signal.bbLower)} y2={yScale(signal.bbLower)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
-            {signal.bbMiddle && <line x1={pad} x2={W - pad} y1={yScale(signal.bbMiddle)} y2={yScale(signal.bbMiddle)} stroke="hsl(45 100% 50% / 0.2)" strokeDasharray="1,3" strokeWidth={0.5} />}
+            <line x1={pad} x2={W - 10} y1={yScale(signal.bbUpper)} y2={yScale(signal.bbUpper)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
+            <line x1={pad} x2={W - 10} y1={yScale(signal.bbLower)} y2={yScale(signal.bbLower)} stroke="hsl(45 100% 50% / 0.3)" strokeDasharray="2,4" strokeWidth={0.8} />
+            {signal.bbMiddle && <line x1={pad} x2={W - 10} y1={yScale(signal.bbMiddle)} y2={yScale(signal.bbMiddle)} stroke="hsl(45 100% 50% / 0.2)" strokeDasharray="1,3" strokeWidth={0.5} />}
           </>
         )}
+
+        {/* Pair & Direction label */}
+        <text x={pad + 4} y={22} fill="hsl(180 100% 95%)" fontSize={10} fontFamily="monospace" fontWeight="bold">{signal.pair} • {signal.timeframe}</text>
+        <rect x={pad + 4} y={28} width={32} height={14} fill={signal.direction === "BUY" ? "hsl(145 80% 45%)" : "hsl(0 85% 55%)"} rx={3} />
+        <text x={pad + 20} y={39} textAnchor="middle" fill="hsl(220 20% 4%)" fontSize={8} fontFamily="monospace" fontWeight="bold">{signal.direction}</text>
       </svg>
     </motion.div>
   );
 };
-
-const LevelLine = ({ y, w, pad, color, label, dash }: { y: number; w: number; pad: number; color: string; label: string; dash: string }) => (
-  <g>
-    <line x1={pad} x2={w - pad} y1={y} y2={y} stroke={color} strokeWidth={1.2} strokeDasharray={dash} />
-    <rect x={w - pad - 28} y={y - 7} width={28} height={14} fill={color} rx={2} opacity={0.9} />
-    <text x={w - pad - 14} y={y + 3.5} textAnchor="middle" fill="hsl(220 20% 4%)" fontSize={7} fontFamily="monospace" fontWeight="bold">{label}</text>
-  </g>
-);
 
 const SignalDisplay = ({ signal }: SignalDisplayProps) => {
   const isBuy = signal.direction === "BUY";
@@ -184,7 +247,6 @@ const SignalDisplay = ({ signal }: SignalDisplayProps) => {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Signal Chart */}
         <SignalChart signal={signal} />
 
         {/* Price Levels */}
