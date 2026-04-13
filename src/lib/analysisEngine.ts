@@ -476,6 +476,11 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
 
   const fibs = fibonacciLevels(resistance, support, isBuy);
 
+  // Compute EMAs for chart drawing
+  const chronCloses = [...closes].reverse();
+  const ema8Arr = calcEMA(chronCloses, 8);
+  const ema21Arr = calcEMA(chronCloses, 21);
+
   return {
     pair: ctx.pair,
     timeframe: timeframe.toUpperCase(),
@@ -503,6 +508,12 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     bbLower: bb.lower,
     bbMiddle: bb.middle,
     adx,
+    imageData: ctx.imageData,
+    fibLevels: fibs,
+    support,
+    resistance,
+    ema8: ema8Arr.length > 0 ? ema8Arr[ema8Arr.length - 1] : undefined,
+    ema21: ema21Arr.length > 0 ? ema21Arr[ema21Arr.length - 1] : undefined,
   };
 };
 
