@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap, Activity, Download } from "lucide-react";
 import React, { useRef, useCallback, useState } from "react";
-import type { OHLC } from "@/lib/analysisEngine";
+import type { OHLC, FVGZone, LiquidityZone, OrderBlock, StructureBreak } from "@/lib/analysisEngine";
 
 export interface Signal {
   pair: string;
@@ -31,6 +31,10 @@ export interface Signal {
   resistance?: number;
   ema8?: number;
   ema21?: number;
+  fvgZones?: FVGZone[];
+  liquidityZones?: LiquidityZone[];
+  orderBlocks?: OrderBlock[];
+  structureBreaks?: StructureBreak[];
 }
 
 interface SignalDisplayProps {
@@ -107,34 +111,146 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       ctx.fillText(price.toFixed(signal.entry.includes(".") ? signal.entry.split(".")[1].length : 2), padL - 5, y + 3);
     }
 
+    // ── Order Blocks ──
+    if (signal.orderBlocks && signal.orderBlocks.length > 0) {
+      signal.orderBlocks.forEach((ob) => {
+        const obTop = yScale(ob.top);
+        const obBot = yScale(ob.bottom);
+        const obH = Math.abs(obBot - obTop);
+        const xStart = padL + (ob.index / candles.length) * chartW;
+        const obW = Math.max(chartW - (xStart - padL), chartW * 0.3);
+        if (ob.type === "bullish") {
+          ctx.fillStyle = "rgba(0,180,255,0.12)";
+          ctx.strokeStyle = "rgba(0,180,255,0.6)";
+        } else {
+          ctx.fillStyle = "rgba(255,100,50,0.12)";
+          ctx.strokeStyle = "rgba(255,100,50,0.6)";
+        }
+        ctx.fillRect(xStart, Math.min(obTop, obBot), obW, obH);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(xStart, Math.min(obTop, obBot), obW, obH);
+        ctx.setLineDash([]);
+        // Label
+        ctx.fillStyle = ob.type === "bullish" ? "rgba(0,180,255,0.9)" : "rgba(255,100,50,0.9)";
+        ctx.font = "bold 7px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(`OB ${ob.type === "bullish" ? "▲" : "▼"}`, xStart + 3, Math.min(obTop, obBot) - 3);
+      });
+    }
+
+    // ── Fair Value Gaps (FVG) ──
+    if (signal.fvgZones && signal.fvgZones.length > 0) {
+      signal.fvgZones.forEach((fvg) => {
+        const fvgTop = yScale(fvg.top);
+        const fvgBot = yScale(fvg.bottom);
+        const fvgH = Math.abs(fvgBot - fvgTop);
+        const xStart = padL + (fvg.index / candles.length) * chartW;
+        const fvgW = Math.max(chartW - (xStart - padL), chartW * 0.25);
+        if (fvg.type === "bullish") {
+          ctx.fillStyle = "rgba(0,255,180,0.1)";
+          ctx.strokeStyle = "rgba(0,255,180,0.5)";
+        } else {
+          ctx.fillStyle = "rgba(255,80,180,0.1)";
+          ctx.strokeStyle = "rgba(255,80,180,0.5)";
+        }
+        ctx.fillRect(xStart, Math.min(fvgTop, fvgBot), fvgW, Math.max(fvgH, 2));
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(xStart, Math.min(fvgTop, fvgBot));
+        ctx.lineTo(xStart + fvgW, Math.min(fvgTop, fvgBot));
+        ctx.moveTo(xStart, Math.max(fvgTop, fvgBot));
+        ctx.lineTo(xStart + fvgW, Math.max(fvgTop, fvgBot));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // FVG label
+        ctx.fillStyle = fvg.type === "bullish" ? "rgba(0,255,180,0.85)" : "rgba(255,80,180,0.85)";
+        ctx.font = "bold 7px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(`FVG`, xStart + 3, Math.min(fvgTop, fvgBot) + fvgH / 2 + 3);
+      });
+    }
+
+    // ── Liquidity Zones ──
+    if (signal.liquidityZones && signal.liquidityZones.length > 0) {
+      signal.liquidityZones.forEach((lz) => {
+        const ly = yScale(lz.price);
+        if (ly < padT || ly > H - padB) return;
+        const color = lz.type === "buy-side" ? "rgba(255,200,0,0.6)" : "rgba(150,100,255,0.6)";
+        const bgColor = lz.type === "buy-side" ? "rgba(255,200,0,0.06)" : "rgba(150,100,255,0.06)";
+        // Zone band
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(padL, ly - 5, chartW, 10);
+        // Dashed line
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([8, 4, 2, 4]);
+        ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(W - padR, ly); ctx.stroke();
+        ctx.setLineDash([]);
+        // $ icons for liquidity
+        ctx.fillStyle = color;
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "right";
+        const label = lz.type === "buy-side" ? `$$$ BSL (${lz.strength}x)` : `$$$ SSL (${lz.strength}x)`;
+        ctx.fillText(label, W - padR - 3, ly - 7);
+      });
+    }
+
+    // ── Structure Breaks (CHoCH / BOS) ──
+    if (signal.structureBreaks && signal.structureBreaks.length > 0) {
+      signal.structureBreaks.forEach((sb) => {
+        const sy = yScale(sb.price);
+        if (sy < padT || sy > H - padB) return;
+        const color = sb.direction === "bullish" ? "rgba(0,220,255,0.7)" : "rgba(255,120,0,0.7)";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath(); ctx.moveTo(padL, sy); ctx.lineTo(W - padR, sy); ctx.stroke();
+        ctx.setLineDash([]);
+        // Label badge
+        const text = `${sb.type} ${sb.direction === "bullish" ? "▲" : "▼"}`;
+        const tw = ctx.measureText(text).width + 12;
+        ctx.fillStyle = color;
+        const bx = padL + chartW * 0.6;
+        ctx.beginPath();
+        ctx.roundRect(bx, sy - 10, tw, 16, 3);
+        ctx.fill();
+        ctx.fillStyle = "#0a0e14";
+        ctx.font = "bold 8px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(text, bx + 6, sy + 2);
+      });
+    }
+
     // ── Support & Resistance zones ──
     if (signal.support) {
       const sy = yScale(signal.support);
       ctx.fillStyle = "rgba(0,200,120,0.08)";
-      ctx.fillRect(padL, sy - 4, chartW, 8);
-      ctx.strokeStyle = "rgba(0,200,120,0.5)";
-      ctx.lineWidth = 1;
+      ctx.fillRect(padL, sy - 6, chartW, 12);
+      ctx.strokeStyle = "rgba(0,200,120,0.6)";
+      ctx.lineWidth = 1.2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.moveTo(padL, sy); ctx.lineTo(W - padR, sy); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(0,200,120,0.8)";
+      ctx.fillStyle = "rgba(0,200,120,0.9)";
       ctx.font = "bold 8px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`S: ${signal.support.toFixed(2)}`, padL + 3, sy - 6);
+      ctx.fillText(`SUPPORT: ${signal.support.toFixed(2)}`, padL + 3, sy - 8);
     }
     if (signal.resistance) {
       const ry = yScale(signal.resistance);
       ctx.fillStyle = "rgba(255,80,80,0.08)";
-      ctx.fillRect(padL, ry - 4, chartW, 8);
-      ctx.strokeStyle = "rgba(255,80,80,0.5)";
-      ctx.lineWidth = 1;
+      ctx.fillRect(padL, ry - 6, chartW, 12);
+      ctx.strokeStyle = "rgba(255,80,80,0.6)";
+      ctx.lineWidth = 1.2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.moveTo(padL, ry); ctx.lineTo(W - padR, ry); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "rgba(255,80,80,0.8)";
+      ctx.fillStyle = "rgba(255,80,80,0.9)";
       ctx.font = "bold 8px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`R: ${signal.resistance.toFixed(2)}`, padL + 3, ry - 6);
+      ctx.fillText(`RESISTANCE: ${signal.resistance.toFixed(2)}`, padL + 3, ry - 8);
     }
 
     // ── Fibonacci levels ──
@@ -171,7 +287,6 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
         ctx.beginPath(); ctx.moveTo(padL, by); ctx.lineTo(W - padR, by); ctx.stroke();
         ctx.setLineDash([]);
       });
-      // Fill BB band area
       const bbTopY = yScale(signal.bbUpper);
       const bbBotY = yScale(signal.bbLower);
       ctx.fillStyle = "rgba(255,215,0,0.04)";
@@ -186,18 +301,15 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       const bodyTop = yScale(Math.max(c.open, c.close));
       const bodyBot = yScale(Math.min(c.open, c.close));
       const bH = Math.max(1, bodyBot - bodyTop);
-      // Wick
       ctx.strokeStyle = bull ? "rgba(0,210,130,0.7)" : "rgba(255,70,70,0.7)";
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x + cW / 2, yScale(c.high)); ctx.lineTo(x + cW / 2, yScale(c.low)); ctx.stroke();
-      // Body
       ctx.fillStyle = bull ? "rgba(0,210,130,0.85)" : "rgba(255,70,70,0.85)";
       ctx.fillRect(x, bodyTop, cW * 0.8, bH);
     });
 
     // ── EMA trend lines ──
     if (signal.ema8 && signal.ema21) {
-      // Draw simple trend arrow based on EMAs
       const lastX = padL + chartW - 20;
       const ema8Y = yScale(signal.ema8);
       const ema21Y = yScale(signal.ema21);
@@ -209,7 +321,7 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       ctx.beginPath(); ctx.moveTo(lastX - 60, ema21Y + (signal.ema8 > signal.ema21 ? 5 : -5)); ctx.lineTo(lastX, ema21Y); ctx.stroke();
     }
 
-    // ── TP Zones (shaded) ──
+    // ── TP/SL Zones (shaded) ──
     const entryY = yScale(entry);
     const tp3Y = yScale(tp3);
     const slY = yScale(sl);
@@ -226,8 +338,6 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       ctx.setLineDash(dash);
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
       ctx.setLineDash([]);
-
-      // Price badge right
       const priceStr = price.toFixed(signal.entry.includes(".") ? signal.entry.split(".")[1].length : 2);
       ctx.fillStyle = color;
       ctx.fillRect(W - padR + 2, y - 9, padR - 6, 18);
@@ -235,8 +345,6 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       ctx.font = "bold 9px monospace";
       ctx.textAlign = "center";
       ctx.fillText(priceStr, W - padR + 2 + (padR - 6) / 2, y + 3);
-
-      // Label badge left
       ctx.fillStyle = color;
       const lw = ctx.measureText(label).width + 10;
       ctx.fillRect(padL, y - 9, lw, 18);
@@ -269,33 +377,50 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
     ctx.fill();
 
     // ── Title bar ──
-    ctx.fillStyle = "rgba(10,14,20,0.75)";
-    ctx.fillRect(0, 0, W, 28);
+    ctx.fillStyle = "rgba(10,14,20,0.8)";
+    ctx.fillRect(0, 0, W, 30);
     ctx.fillStyle = "rgb(0,220,200)";
     ctx.font = "bold 11px monospace";
     ctx.textAlign = "left";
-    ctx.fillText(`${signal.pair} • ${signal.timeframe}`, 10, 18);
+    ctx.fillText(`${signal.pair} • ${signal.timeframe}`, 10, 19);
     ctx.fillStyle = isBuy ? "rgb(0,220,140)" : "rgb(255,60,60)";
     const dirW = ctx.measureText(signal.direction).width + 14;
-    ctx.fillRect(W / 2 - dirW / 2, 5, dirW, 18);
+    ctx.fillRect(W / 2 - dirW / 2, 6, dirW, 18);
     ctx.fillStyle = "#0a0e14";
     ctx.font = "bold 10px monospace";
     ctx.textAlign = "center";
-    ctx.fillText(signal.direction, W / 2, 18);
+    ctx.fillText(signal.direction, W / 2, 19);
 
     // Strategy label
     ctx.fillStyle = "rgba(180,220,255,0.5)";
     ctx.font = "9px monospace";
     ctx.textAlign = "right";
-    ctx.fillText(signal.strategy, W - 10, 18);
+    ctx.fillText(signal.strategy, W - 10, 19);
 
-    // ── Confidence badge bottom ──
-    ctx.fillStyle = "rgba(10,14,20,0.75)";
-    ctx.fillRect(0, H - 22, W, 22);
+    // ── Legend bar bottom ──
+    ctx.fillStyle = "rgba(10,14,20,0.8)";
+    ctx.fillRect(0, H - 28, W, 28);
     ctx.fillStyle = "rgba(180,200,210,0.6)";
     ctx.font = "8px monospace";
     ctx.textAlign = "left";
-    ctx.fillText(`Confidence: ${signal.confidence}%  |  R:R ${signal.riskReward}  |  ${signal.trend || ""}  |  FOREX-VISION`, 10, H - 7);
+    ctx.fillText(`Confidence: ${signal.confidence}%  |  R:R ${signal.riskReward}  |  ${signal.trend || ""}`, 10, H - 14);
+    // Legend items
+    const legends = [
+      { color: "rgba(0,180,255,0.8)", label: "OB" },
+      { color: "rgba(0,255,180,0.8)", label: "FVG" },
+      { color: "rgba(255,200,0,0.8)", label: "LIQ" },
+      { color: "rgba(0,220,255,0.8)", label: "BOS" },
+    ];
+    let lx = W - 10;
+    ctx.font = "bold 7px monospace";
+    ctx.textAlign = "right";
+    legends.reverse().forEach(lg => {
+      ctx.fillStyle = lg.color;
+      ctx.fillText(lg.label, lx, H - 14);
+      lx -= ctx.measureText(lg.label).width + 4;
+      ctx.fillRect(lx - 6, H - 18, 5, 5);
+      lx -= 12;
+    });
 
     setLoaded(true);
   }, [signal, hasCandles]);
