@@ -1,47 +1,75 @@
-import { useState } from "react";
-import { AnimatePresence } from "framer-motion";
-import PinLock from "@/components/PinLock";
+import { motion } from "framer-motion";
 import Header from "@/components/Header";
-import ApiKeySetup from "@/components/ApiKeySetup";
 import MarketSessions from "@/components/MarketSessions";
 import ChartAnalyzer from "@/components/ChartAnalyzer";
+import { useAuth } from "@/hooks/useAuth";
+import { Navigate } from "react-router-dom";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 const Index = () => {
-  const [unlocked, setUnlocked] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("fx_twelvedata_key") || "");
+  const { user, loading, isApproved, isAdmin, apiKey } = useAuth();
 
-  const handleSaveKey = (key: string) => {
-    setApiKey(key);
-    localStorage.setItem("fx_twelvedata_key", key);
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background grid-bg scanline flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return <Navigate to="/auth" replace />;
+
+  const hasAccess = isApproved || isAdmin;
 
   return (
     <div className="min-h-screen bg-background grid-bg scanline">
-      <AnimatePresence mode="wait">
-        {!unlocked && <PinLock key="lock" onUnlock={() => setUnlocked(true)} />}
-      </AnimatePresence>
-
-      {unlocked && (
-        <>
-          <Header />
-          <main className="container mx-auto px-4 py-6 space-y-6 max-w-5xl">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <ApiKeySetup onSave={handleSaveKey} savedKey={apiKey} />
+      <Header />
+      <main className="container mx-auto px-4 py-6 space-y-6 max-w-5xl">
+        {!hasAccess ? (
+          <motion.div
+            className="terminal-card p-12 text-center glow-border"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <ShieldAlert className="w-12 h-12 text-warning mx-auto mb-4" />
+            <h2 className="font-display text-lg font-bold tracking-wider mb-2">ACCOUNT PENDING</h2>
+            <p className="font-mono text-sm text-muted-foreground">
+              Your account is pending admin approval. Please wait for access.
+            </p>
+          </motion.div>
+        ) : (
+          <>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
               <MarketSessions />
-            </div>
+            </motion.div>
 
             {!apiKey ? (
-              <div className="terminal-card p-12 text-center">
+              <motion.div
+                className="terminal-card p-12 text-center"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+              >
                 <div className="font-display text-sm tracking-wider text-muted-foreground">
-                  ⚡ SETUP API KEY TO ENABLE CHART ANALYSIS
+                  ⚡ WAITING FOR ADMIN TO CONFIGURE API KEY
                 </div>
-              </div>
+              </motion.div>
             ) : (
-              <ChartAnalyzer apiKey={apiKey} />
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+              >
+                <ChartAnalyzer apiKey={apiKey} />
+              </motion.div>
             )}
-          </main>
-        </>
-      )}
+          </>
+        )}
+      </main>
     </div>
   );
 };
