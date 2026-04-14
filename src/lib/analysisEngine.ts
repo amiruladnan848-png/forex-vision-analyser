@@ -198,6 +198,159 @@ function findSupportResistance(candles: OHLC[]): { support: number; resistance: 
   };
 }
 
+// ─── Fair Value Gap (FVG) Detection ───────────────────────────────────
+
+export interface FVGZone {
+  type: "bullish" | "bearish";
+  top: number;
+  bottom: number;
+  index: number;
+}
+
+function detectFVG(candles: OHLC[]): FVGZone[] {
+  const zones: FVGZone[] = [];
+  // candles[0] is most recent; we work chronologically reversed
+  for (let i = 2; i < candles.length; i++) {
+    const prev = candles[i];      // oldest of 3
+    const mid = candles[i - 1];   // middle
+    const next = candles[i - 2];  // newest of 3
+    // Bullish FVG: gap between prev.high and next.low (mid's body fills in between)
+    if (next.low > prev.high) {
+      zones.push({ type: "bullish", top: next.low, bottom: prev.high, index: i - 1 });
+    }
+    // Bearish FVG: gap between prev.low and next.high
+    if (next.high < prev.low) {
+      zones.push({ type: "bearish", top: prev.low, bottom: next.high, index: i - 1 });
+    }
+  }
+  return zones.slice(0, 5); // max 5
+}
+
+// ─── Liquidity Zone Detection ─────────────────────────────────────────
+
+export interface LiquidityZone {
+  type: "buy-side" | "sell-side";
+  price: number;
+  strength: number; // how many times tested
+  index: number;
+}
+
+function detectLiquidityZones(candles: OHLC[]): LiquidityZone[] {
+  const zones: LiquidityZone[] = [];
+  const tolerance = (Math.max(...candles.map(c => c.high)) - Math.min(...candles.map(c => c.low))) * 0.005;
+
+  // Equal highs = buy-side liquidity
+  for (let i = 0; i < candles.length - 1; i++) {
+    let count = 1;
+    for (let j = i + 1; j < candles.length; j++) {
+      if (Math.abs(candles[i].high - candles[j].high) < tolerance) count++;
+    }
+    if (count >= 2) {
+      zones.push({ type: "buy-side", price: candles[i].high, strength: count, index: i });
+    }
+  }
+  // Equal lows = sell-side liquidity
+  for (let i = 0; i < candles.length - 1; i++) {
+    let count = 1;
+    for (let j = i + 1; j < candles.length; j++) {
+      if (Math.abs(candles[i].low - candles[j].low) < tolerance) count++;
+    }
+    if (count >= 2) {
+      zones.push({ type: "sell-side", price: candles[i].low, strength: count, index: i });
+    }
+  }
+  // Deduplicate nearby zones
+  const deduped: LiquidityZone[] = [];
+  for (const z of zones) {
+    if (!deduped.some(d => d.type === z.type && Math.abs(d.price - z.price) < tolerance * 3)) {
+      deduped.push(z);
+    }
+  }
+  return deduped.sort((a, b) => b.strength - a.strength).slice(0, 6);
+}
+
+// ─── Order Block Detection ────────────────────────────────────────────
+
+export interface OrderBlock {
+  type: "bullish" | "bearish";
+  top: number;
+  bottom: number;
+  index: number;
+}
+
+function detectOrderBlocks(candles: OHLC[]): OrderBlock[] {
+  const blocks: OrderBlock[] = [];
+  for (let i = 1; i < candles.length - 2; i++) {
+    const c = candles[i];
+    const next = candles[i - 1];
+    // Bullish OB: last bearish candle before a strong bullish move
+    if (c.close < c.open && next.close > next.open && (next.close - next.open) > (c.open - c.close) * 1.5) {
+      blocks.push({ type: "bullish", top: c.open, bottom: c.low, index: i });
+    }
+    // Bearish OB: last bullish candle before a strong bearish move
+    if (c.close > c.open && next.close < next.open && (next.open - next.close) > (c.close - c.open) * 1.5) {
+      blocks.push({ type: "bearish", top: c.high, bottom: c.open, index: i });
+    }
+  }
+  return blocks.slice(0, 4);
+}
+
+// ─── Break of Structure Detection ─────────────────────────────────────
+
+export interface StructureBreak {
+  type: "CHoCH" | "BOS";
+  direction: "bullish" | "bearish";
+  price: number;
+  index: number;
+}
+
+function detectStructureBreaks(candles: OHLC[]): StructureBreak[] {
+  const breaks: StructureBreak[] = [];
+  const swingHighs: { price: number; idx: number }[] = [];
+  const swingLows: { price: number; idx: number }[] = [];
+
+  for (let i = 2; i < candles.length - 2; i++) {
+    if (candles[i].high > candles[i-1].high && candles[i].high > candles[i+1].high) {
+      swingHighs.push({ price: candles[i].high, idx: i });
+    }
+    if (candles[i].low < candles[i-1].low && candles[i].low < candles[i+1].low) {
+      swingLows.push({ price: candles[i].low, idx: i });
+    }
+  }
+
+  // Check if recent price broke above swing high (bullish BOS) or below swing low (bearish BOS)
+  if (swingHighs.length >= 2) {
+    const recent = candles[0];
+    const lastSwingHigh = swingHighs[0];
+    if (recent.close > lastSwingHigh.price) {
+      breaks.push({ type: "BOS", direction: "bullish", price: lastSwingHigh.price, index: lastSwingHigh.idx });
+    }
+  }
+  if (swingLows.length >= 2) {
+    const recent = candles[0];
+    const lastSwingLow = swingLows[0];
+    if (recent.close < lastSwingLow.price) {
+      breaks.push({ type: "BOS", direction: "bearish", price: lastSwingLow.price, index: lastSwingLow.idx });
+    }
+  }
+
+  // CHoCH: trend reversal — breaking in opposite direction of previous trend
+  if (swingHighs.length >= 2 && swingLows.length >= 1) {
+    const sh1 = swingHighs[0], sh2 = swingHighs[1];
+    if (sh1.price < sh2.price && candles[0].close > sh1.price) {
+      breaks.push({ type: "CHoCH", direction: "bullish", price: sh1.price, index: sh1.idx });
+    }
+  }
+  if (swingLows.length >= 2 && swingHighs.length >= 1) {
+    const sl1 = swingLows[0], sl2 = swingLows[1];
+    if (sl1.price > sl2.price && candles[0].close < sl1.price) {
+      breaks.push({ type: "CHoCH", direction: "bearish", price: sl1.price, index: sl1.idx });
+    }
+  }
+
+  return breaks.slice(0, 4);
+}
+
 function detectTrend(candles: OHLC[]): "BULLISH" | "BEARISH" | "SIDEWAYS" {
   const closes = [...candles].reverse().map(c => c.close);
   if (closes.length < 21) return "SIDEWAYS";
@@ -481,6 +634,12 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const ema8Arr = calcEMA(chronCloses, 8);
   const ema21Arr = calcEMA(chronCloses, 21);
 
+  // Detect advanced zones
+  const fvgZones = detectFVG(candles);
+  const liquidityZones = detectLiquidityZones(candles);
+  const orderBlocks = detectOrderBlocks(candles);
+  const structureBreaks = detectStructureBreaks(candles);
+
   return {
     pair: ctx.pair,
     timeframe: timeframe.toUpperCase(),
@@ -514,6 +673,10 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     resistance,
     ema8: ema8Arr.length > 0 ? ema8Arr[ema8Arr.length - 1] : undefined,
     ema21: ema21Arr.length > 0 ? ema21Arr[ema21Arr.length - 1] : undefined,
+    fvgZones,
+    liquidityZones,
+    orderBlocks,
+    structureBreaks,
   };
 };
 
