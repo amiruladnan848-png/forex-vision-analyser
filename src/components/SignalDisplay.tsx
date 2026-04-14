@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Target, ShieldAlert, BarChart3, Layers, Zap, Activity, Download } from "lucide-react";
 import React, { useRef, useCallback, useState } from "react";
-import type { OHLC } from "@/lib/analysisEngine";
+import type { OHLC, FVGZone, LiquidityZone, OrderBlock, StructureBreak } from "@/lib/analysisEngine";
 
 export interface Signal {
   pair: string;
@@ -31,6 +31,10 @@ export interface Signal {
   resistance?: number;
   ema8?: number;
   ema21?: number;
+  fvgZones?: FVGZone[];
+  liquidityZones?: LiquidityZone[];
+  orderBlocks?: OrderBlock[];
+  structureBreaks?: StructureBreak[];
 }
 
 interface SignalDisplayProps {
