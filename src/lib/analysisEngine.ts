@@ -56,9 +56,38 @@ export interface OHLC {
   datetime: string;
 }
 
-// ─── Single API Call: Fetch OHLC Time Series (1 credit) ───────────────
+// ─── In-Memory Cache to Save API Credits ──────────────────────────────
+
+interface CacheEntry {
+  candles: OHLC[];
+  timestamp: number;
+}
+
+const ohlcCache = new Map<string, CacheEntry>();
+
+// Cache TTL per timeframe (ms) — prevents redundant API calls
+const CACHE_TTL: Record<string, number> = {
+  "1min": 60_000,
+  "5min": 4 * 60_000,
+  "15min": 10 * 60_000,
+  "30min": 20 * 60_000,
+  "1h": 45 * 60_000,
+  "4h": 3 * 3600_000,
+  "1day": 12 * 3600_000,
+  "1week": 48 * 3600_000,
+};
+
+// ─── Single API Call: Fetch OHLC Time Series (1 credit, cached) ───────
 
 async function fetchOHLC(symbol: string, apiKey: string, interval: string = "1h", outputSize: number = 50): Promise<OHLC[]> {
+  const cacheKey = `${symbol}:${interval}`;
+  const cached = ohlcCache.get(cacheKey);
+  const ttl = CACHE_TTL[interval] || 60_000;
+
+  if (cached && Date.now() - cached.timestamp < ttl) {
+    return cached.candles;
+  }
+
   const res = await fetch(
     `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${outputSize}&apikey=${encodeURIComponent(apiKey)}&format=JSON`
   );
@@ -69,13 +98,16 @@ async function fetchOHLC(symbol: string, apiKey: string, interval: string = "1h"
   if (!data.values || data.values.length === 0) {
     throw new Error("No market data available. Market may be closed.");
   }
-  return data.values.map((v: any) => ({
+  const candles = data.values.map((v: any) => ({
     open: parseFloat(v.open),
     high: parseFloat(v.high),
     low: parseFloat(v.low),
     close: parseFloat(v.close),
     datetime: v.datetime,
   }));
+
+  ohlcCache.set(cacheKey, { candles, timestamp: Date.now() });
+  return candles;
 }
 
 // ─── Technical Indicators (ALL from real OHLC data) ───────────────────
@@ -165,7 +197,6 @@ function calcADX(candles: OHLC[], period: number = 14): number {
     minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
     tr.push(Math.max(chron[i].high - chron[i].low, Math.abs(chron[i].high - chron[i - 1].close), Math.abs(chron[i].low - chron[i - 1].close)));
   }
-  // Smooth with Wilder's method
   let smoothTR = tr.slice(0, period).reduce((a, b) => a + b, 0);
   let smoothPlusDM = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
   let smoothMinusDM = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
@@ -181,6 +212,43 @@ function calcADX(candles: OHLC[], period: number = 14): number {
   }
   if (dxValues.length === 0) return 25;
   return dxValues.slice(-period).reduce((a, b) => a + b, 0) / Math.min(dxValues.length, period);
+}
+
+// ─── VWAP Approximation ──────────────────────────────────────────────
+
+function calcVWAP(candles: OHLC[]): number {
+  // Approximate VWAP using typical price (no volume from Twelvedata free tier)
+  const chron = [...candles].reverse();
+  let cumTP = 0;
+  for (const c of chron) {
+    cumTP += (c.high + c.low + c.close) / 3;
+  }
+  return cumTP / chron.length;
+}
+
+// ─── Williams %R ─────────────────────────────────────────────────────
+
+function calcWilliamsR(candles: OHLC[], period: number = 14): number {
+  if (candles.length < period) return -50;
+  const slice = candles.slice(0, period);
+  const highH = Math.max(...slice.map(c => c.high));
+  const lowL = Math.min(...slice.map(c => c.low));
+  const close = candles[0].close;
+  if (highH === lowL) return -50;
+  return ((highH - close) / (highH - lowL)) * -100;
+}
+
+// ─── Multi-Timeframe Trend Bias ──────────────────────────────────────
+
+function calcMomentumBias(candles: OHLC[]): number {
+  // Returns -1 to 1 bias from price action momentum
+  if (candles.length < 10) return 0;
+  const recent5 = candles.slice(0, 5);
+  const prev5 = candles.slice(5, 10);
+  const recentAvg = recent5.reduce((s, c) => s + c.close, 0) / 5;
+  const prevAvg = prev5.reduce((s, c) => s + c.close, 0) / 5;
+  const diff = (recentAvg - prevAvg) / prevAvg;
+  return Math.max(-1, Math.min(1, diff * 100));
 }
 
 function findSupportResistance(candles: OHLC[]): { support: number; resistance: number; levels: number[] } {
@@ -209,21 +277,17 @@ export interface FVGZone {
 
 function detectFVG(candles: OHLC[]): FVGZone[] {
   const zones: FVGZone[] = [];
-  // candles[0] is most recent; we work chronologically reversed
   for (let i = 2; i < candles.length; i++) {
-    const prev = candles[i];      // oldest of 3
-    const mid = candles[i - 1];   // middle
-    const next = candles[i - 2];  // newest of 3
-    // Bullish FVG: gap between prev.high and next.low (mid's body fills in between)
+    const prev = candles[i];
+    const next = candles[i - 2];
     if (next.low > prev.high) {
       zones.push({ type: "bullish", top: next.low, bottom: prev.high, index: i - 1 });
     }
-    // Bearish FVG: gap between prev.low and next.high
     if (next.high < prev.low) {
       zones.push({ type: "bearish", top: prev.low, bottom: next.high, index: i - 1 });
     }
   }
-  return zones.slice(0, 5); // max 5
+  return zones.slice(0, 5);
 }
 
 // ─── Liquidity Zone Detection ─────────────────────────────────────────
@@ -231,7 +295,7 @@ function detectFVG(candles: OHLC[]): FVGZone[] {
 export interface LiquidityZone {
   type: "buy-side" | "sell-side";
   price: number;
-  strength: number; // how many times tested
+  strength: number;
   index: number;
 }
 
@@ -239,27 +303,20 @@ function detectLiquidityZones(candles: OHLC[]): LiquidityZone[] {
   const zones: LiquidityZone[] = [];
   const tolerance = (Math.max(...candles.map(c => c.high)) - Math.min(...candles.map(c => c.low))) * 0.005;
 
-  // Equal highs = buy-side liquidity
   for (let i = 0; i < candles.length - 1; i++) {
     let count = 1;
     for (let j = i + 1; j < candles.length; j++) {
       if (Math.abs(candles[i].high - candles[j].high) < tolerance) count++;
     }
-    if (count >= 2) {
-      zones.push({ type: "buy-side", price: candles[i].high, strength: count, index: i });
-    }
+    if (count >= 2) zones.push({ type: "buy-side", price: candles[i].high, strength: count, index: i });
   }
-  // Equal lows = sell-side liquidity
   for (let i = 0; i < candles.length - 1; i++) {
     let count = 1;
     for (let j = i + 1; j < candles.length; j++) {
       if (Math.abs(candles[i].low - candles[j].low) < tolerance) count++;
     }
-    if (count >= 2) {
-      zones.push({ type: "sell-side", price: candles[i].low, strength: count, index: i });
-    }
+    if (count >= 2) zones.push({ type: "sell-side", price: candles[i].low, strength: count, index: i });
   }
-  // Deduplicate nearby zones
   const deduped: LiquidityZone[] = [];
   for (const z of zones) {
     if (!deduped.some(d => d.type === z.type && Math.abs(d.price - z.price) < tolerance * 3)) {
@@ -283,11 +340,9 @@ function detectOrderBlocks(candles: OHLC[]): OrderBlock[] {
   for (let i = 1; i < candles.length - 2; i++) {
     const c = candles[i];
     const next = candles[i - 1];
-    // Bullish OB: last bearish candle before a strong bullish move
     if (c.close < c.open && next.close > next.open && (next.close - next.open) > (c.open - c.close) * 1.5) {
       blocks.push({ type: "bullish", top: c.open, bottom: c.low, index: i });
     }
-    // Bearish OB: last bullish candle before a strong bearish move
     if (c.close > c.open && next.close < next.open && (next.open - next.close) > (c.close - c.open) * 1.5) {
       blocks.push({ type: "bearish", top: c.high, bottom: c.open, index: i });
     }
@@ -318,7 +373,6 @@ function detectStructureBreaks(candles: OHLC[]): StructureBreak[] {
     }
   }
 
-  // Check if recent price broke above swing high (bullish BOS) or below swing low (bearish BOS)
   if (swingHighs.length >= 2) {
     const recent = candles[0];
     const lastSwingHigh = swingHighs[0];
@@ -334,7 +388,6 @@ function detectStructureBreaks(candles: OHLC[]): StructureBreak[] {
     }
   }
 
-  // CHoCH: trend reversal — breaking in opposite direction of previous trend
   if (swingHighs.length >= 2 && swingLows.length >= 1) {
     const sh1 = swingHighs[0], sh2 = swingHighs[1];
     if (sh1.price < sh2.price && candles[0].close > sh1.price) {
@@ -359,8 +412,12 @@ function detectTrend(candles: OHLC[]): "BULLISH" | "BEARISH" | "SIDEWAYS" {
   const l = ema8.length - 1;
   const diff = (ema8[l] - ema21[l]) / ema21[l];
   const prev = l > 3 ? (ema8[l - 3] - ema21[l - 3]) / ema21[l - 3] : diff;
-  if (diff > 0.0005 && ema8[l] > ema8[l - 1]) return "BULLISH";
-  if (diff < -0.0005 && ema8[l] < ema8[l - 1]) return "BEARISH";
+  // Also check EMA50 for stronger confirmation
+  const ema50 = calcEMA(closes, Math.min(50, closes.length));
+  const ema50Diff = ema50.length > 0 ? (ema8[l] - ema50[ema50.length - 1]) / ema50[ema50.length - 1] : 0;
+
+  if (diff > 0.0004 && ema8[l] > ema8[l - 1] && ema50Diff > -0.001) return "BULLISH";
+  if (diff < -0.0004 && ema8[l] < ema8[l - 1] && ema50Diff < 0.001) return "BEARISH";
   return "SIDEWAYS";
 }
 
@@ -402,22 +459,30 @@ function detectCandlePatterns(candles: OHLC[]): string[] {
   if (c0.close > c0.open && c1.close > c1.open && c2.close > c2.open && c0.close > c1.close && c1.close > c2.close) patterns.push("Three White Soldiers");
   if (c0.close < c0.open && c1.close < c1.open && c2.close < c2.open && c0.close < c1.close && c1.close < c2.close) patterns.push("Three Black Crows");
 
+  // Extra patterns for higher accuracy
+  if (candles.length >= 4) {
+    const c3 = candles[3];
+    // Tweezer Bottom
+    if (Math.abs(c0.low - c1.low) < range0 * 0.05 && !isBull1 && isBull0) patterns.push("Tweezer Bottom");
+    // Tweezer Top
+    if (Math.abs(c0.high - c1.high) < range0 * 0.05 && isBull1 && !isBull0) patterns.push("Tweezer Top");
+  }
+
   return patterns.length > 0 ? patterns : ["No Clear Pattern"];
 }
 
-// ─── Session Detection ────────────────────────────────────────────────
+// ─── Session Detection (Enhanced 24hr) ────────────────────────────────
 
-function getActiveSession(): { name: string; volatility: string } {
+function getActiveSession(): { name: string; volatility: string; weight: number } {
   const utcH = new Date().getUTCHours();
-  if (utcH >= 13 && utcH < 17) return { name: "London + New York Overlap", volatility: "VERY HIGH" };
-  if (utcH >= 8 && utcH < 17) return { name: "London", volatility: "HIGH" };
-  if (utcH >= 13 && utcH < 22) return { name: "New York", volatility: "HIGH" };
-  if (utcH >= 0 && utcH < 9) return { name: "Tokyo", volatility: "MEDIUM" };
-  if (utcH >= 22 || utcH < 7) return { name: "Sydney", volatility: "LOW" };
-  return { name: "Off-Session", volatility: "LOW" };
+  if (utcH >= 13 && utcH < 17) return { name: "London + New York Overlap", volatility: "VERY HIGH", weight: 1.15 };
+  if (utcH >= 8 && utcH < 13) return { name: "London", volatility: "HIGH", weight: 1.1 };
+  if (utcH >= 17 && utcH < 22) return { name: "New York", volatility: "HIGH", weight: 1.08 };
+  if (utcH >= 0 && utcH < 9) return { name: "Tokyo/Sydney", volatility: "MEDIUM", weight: 1.0 };
+  return { name: "Late NY / Pre-Asia", volatility: "LOW", weight: 0.95 };
 }
 
-// ─── Multi-Confluence Strategy Engine ─────────────────────────────────
+// ─── Enhanced Multi-Confluence Scoring ────────────────────────────────
 
 interface StrategyResult {
   name: string;
@@ -436,50 +501,71 @@ function scoreConfluence(
   isBullish: boolean, trend: string, rsi: number,
   macd: { histogram: number }, stoch: { k: number; d: number },
   adx: number, bb: { upper: number; lower: number; width: number },
-  price: number, candlePatterns: string[], nearZone: boolean
+  price: number, candlePatterns: string[], nearZone: boolean,
+  williamsR: number, momentumBias: number, vwap: number,
+  sessionWeight: number
 ): number {
   let conf = 50;
-  // Trend alignment (strong factor)
-  if ((isBullish && trend === "BULLISH") || (!isBullish && trend === "BEARISH")) conf += 10;
+
+  // Trend alignment (strongest factor)
+  if ((isBullish && trend === "BULLISH") || (!isBullish && trend === "BEARISH")) conf += 12;
   else if (trend === "SIDEWAYS") conf += 0;
-  else conf -= 8; // Counter-trend penalty
+  else conf -= 10;
 
-  // RSI confirmation
-  if (isBullish && rsi < 35) conf += 8;
-  else if (isBullish && rsi > 70) conf -= 10;
-  else if (!isBullish && rsi > 65) conf += 8;
-  else if (!isBullish && rsi < 30) conf -= 10;
+  // RSI confirmation with divergence awareness
+  if (isBullish && rsi < 35) conf += 10;
+  else if (isBullish && rsi > 70) conf -= 12;
+  else if (!isBullish && rsi > 65) conf += 10;
+  else if (!isBullish && rsi < 30) conf -= 12;
+  else if ((isBullish && rsi >= 40 && rsi <= 60) || (!isBullish && rsi >= 40 && rsi <= 60)) conf += 3;
 
-  // MACD
-  if ((isBullish && macd.histogram > 0) || (!isBullish && macd.histogram < 0)) conf += 7;
-  else conf -= 4;
+  // MACD histogram + crossover
+  if ((isBullish && macd.histogram > 0) || (!isBullish && macd.histogram < 0)) conf += 8;
+  else conf -= 5;
 
-  // Stochastic
-  if ((isBullish && stoch.k < 30 && stoch.k > stoch.d) || (!isBullish && stoch.k > 70 && stoch.k < stoch.d)) conf += 8;
-  else if ((isBullish && stoch.k > 80) || (!isBullish && stoch.k < 20)) conf -= 5;
+  // Stochastic with %K/%D cross
+  if ((isBullish && stoch.k < 30 && stoch.k > stoch.d) || (!isBullish && stoch.k > 70 && stoch.k < stoch.d)) conf += 10;
+  else if ((isBullish && stoch.k > 80) || (!isBullish && stoch.k < 20)) conf -= 6;
 
   // ADX trend strength
-  if (adx > 25) conf += 6; // Strong trend
-  else if (adx < 15) conf -= 3; // Weak/choppy
+  if (adx > 30) conf += 8;
+  else if (adx > 25) conf += 5;
+  else if (adx < 15) conf -= 4;
 
-  // Bollinger Band position
-  if (isBullish && price <= bb.lower) conf += 7;
-  else if (!isBullish && price >= bb.upper) conf += 7;
+  // BB position
+  if (isBullish && price <= bb.lower) conf += 8;
+  else if (!isBullish && price >= bb.upper) conf += 8;
 
   // S/R zone proximity
-  if (nearZone) conf += 8;
+  if (nearZone) conf += 9;
+
+  // Williams %R confirmation
+  if (isBullish && williamsR < -80) conf += 6;
+  else if (!isBullish && williamsR > -20) conf += 6;
+
+  // Momentum bias alignment
+  if ((isBullish && momentumBias > 0.2) || (!isBullish && momentumBias < -0.2)) conf += 5;
+  else if ((isBullish && momentumBias < -0.3) || (!isBullish && momentumBias > 0.3)) conf -= 4;
+
+  // VWAP position
+  if (isBullish && price < vwap) conf += 4;
+  else if (!isBullish && price > vwap) conf += 4;
 
   // Candlestick patterns
-  const bullPatterns = ["Bullish Engulfing", "Hammer", "Morning Star", "Three White Soldiers", "Bullish Pin Bar"];
-  const bearPatterns = ["Bearish Engulfing", "Shooting Star", "Evening Star", "Three Black Crows", "Bearish Pin Bar"];
+  const bullPatterns = ["Bullish Engulfing", "Hammer", "Morning Star", "Three White Soldiers", "Bullish Pin Bar", "Tweezer Bottom"];
+  const bearPatterns = ["Bearish Engulfing", "Shooting Star", "Evening Star", "Three Black Crows", "Bearish Pin Bar", "Tweezer Top"];
   const relevant = isBullish ? bullPatterns : bearPatterns;
-  if (candlePatterns.some(p => relevant.includes(p))) conf += 7;
-  if (candlePatterns.includes("Doji")) conf += 3; // Indecision = potential reversal
+  const matchCount = candlePatterns.filter(p => relevant.includes(p)).length;
+  conf += matchCount * 5;
+  if (candlePatterns.includes("Doji")) conf += 3;
 
-  // Sideways market handling — reduce confidence for directional trades
-  if (trend === "SIDEWAYS" && adx < 20) conf -= 5;
+  // Sideways market dampener
+  if (trend === "SIDEWAYS" && adx < 20) conf -= 6;
 
-  return Math.max(35, Math.min(conf, 95));
+  // Session weight multiplier
+  conf = Math.round(conf * sessionWeight);
+
+  return Math.max(35, Math.min(conf, 96));
 }
 
 function buildStrategy(
@@ -498,7 +584,7 @@ function buildStrategy(
     `RSI: ${rsi.toFixed(1)}`,
     `MACD: ${macd.histogram > 0 ? "+" : ""}${macd.histogram.toFixed(d)}`,
     `Stoch: ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)}`,
-    `ADX: ${adx.toFixed(1)} (${adx > 25 ? "Strong" : adx > 20 ? "Moderate" : "Weak"})`,
+    `ADX: ${adx.toFixed(1)} (${adx > 30 ? "Very Strong" : adx > 25 ? "Strong" : adx > 20 ? "Moderate" : "Weak"})`,
     `BB: ${bb.width > 0.02 ? "Wide" : "Narrow"} (${bb.lower.toFixed(d)}-${bb.upper.toFixed(d)})`,
   ];
   return {
@@ -513,71 +599,75 @@ function buildStrategy(
 function runSMC(
   trend: string, rsi: number, atr: number, price: number, support: number, resistance: number,
   candlePatterns: string[], macd: ReturnType<typeof calcMACD>, stoch: ReturnType<typeof calcStochastic>,
-  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number
+  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number,
+  williamsR: number, momentumBias: number, vwap: number, sessionWeight: number
 ): StrategyResult {
-  const isBullish = trend === "BULLISH" || (trend === "SIDEWAYS" && rsi < 40 && stoch.k < 25);
+  const isBullish = trend === "BULLISH" || (trend === "SIDEWAYS" && rsi < 40 && stoch.k < 25 && momentumBias > -0.1);
   const nearZone = isBullish ? Math.abs(price - support) < atr * 2.5 : Math.abs(price - resistance) < atr * 2.5;
-  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone);
+  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone, williamsR, momentumBias, vwap, sessionWeight);
   const extras = isBullish
     ? ["Bullish Order Block", nearZone ? "Demand Zone" : "CHoCH"]
     : ["Bearish Order Block", nearZone ? "Supply Zone" : "BOS"];
   const analysis = isBullish
-    ? `SMC confirms bullish CHoCH near ${support.toFixed(d)}. ${candlePatterns[0]} rejection with RSI ${rsi.toFixed(1)}, MACD hist ${macd.histogram > 0 ? "positive" : "turning"}. ADX ${adx.toFixed(1)} shows ${adx > 25 ? "strong" : "developing"} trend. Stoch %K(${stoch.k.toFixed(0)}) > %D(${stoch.d.toFixed(0)}) confirms momentum. BB ${price <= bb.lower ? "at lower band — oversold" : "within range"}. Target: ${resistance.toFixed(d)}.`
-    : `SMC bearish BOS at ${resistance.toFixed(d)}. ${candlePatterns[0]} confirms distribution. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. ADX ${adx.toFixed(1)} ${adx > 25 ? "strong bearish" : "developing"}. Stoch overbought cross. BB ${price >= bb.upper ? "at upper band — overbought" : "within range"}. Target: ${support.toFixed(d)}.`;
+    ? `SMC confirms bullish CHoCH near ${support.toFixed(d)}. ${candlePatterns[0]} rejection with RSI ${rsi.toFixed(1)}, MACD hist ${macd.histogram > 0 ? "positive" : "turning"}. ADX ${adx.toFixed(1)} shows ${adx > 25 ? "strong" : "developing"} trend. Stoch %K(${stoch.k.toFixed(0)}) > %D(${stoch.d.toFixed(0)}) confirms momentum. BB ${price <= bb.lower ? "at lower band — oversold" : "within range"}. VWAP ${price < vwap ? "below — discount zone" : "above"}. Target: ${resistance.toFixed(d)}.`
+    : `SMC bearish BOS at ${resistance.toFixed(d)}. ${candlePatterns[0]} confirms distribution. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. ADX ${adx.toFixed(1)} ${adx > 25 ? "strong bearish" : "developing"}. Stoch overbought cross. BB ${price >= bb.upper ? "at upper band — overbought" : "within range"}. VWAP ${price > vwap ? "above — premium zone" : "below"}. Target: ${support.toFixed(d)}.`;
   return buildStrategy("Smart Money Concepts + ICT", isBullish, conf, trend, rsi, atr, price, support, resistance, macd, stoch, adx, bb, candlePatterns, d, 1.5, 2.0, 3.5, 5.0, extras, analysis);
 }
 
 function runFibSD(
   trend: string, rsi: number, atr: number, price: number, support: number, resistance: number,
   candlePatterns: string[], macd: ReturnType<typeof calcMACD>, stoch: ReturnType<typeof calcStochastic>,
-  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number
+  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number,
+  williamsR: number, momentumBias: number, vwap: number, sessionWeight: number
 ): StrategyResult {
   const isBullish = trend === "BULLISH" || (trend === "SIDEWAYS" && price < (support + resistance) / 2);
   const fibs = fibonacciLevels(resistance, support, isBullish);
   const nearFib = Math.abs(price - fibs["61.8%"]) < atr * 1.5 || Math.abs(price - fibs["38.2%"]) < atr * 1.5;
-  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearFib);
+  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearFib, williamsR, momentumBias, vwap, sessionWeight);
   const extras = [isBullish ? "Rally-Base-Rally" : "Drop-Base-Drop"];
   if (Math.abs(price - fibs["61.8%"]) < atr * 1.5) extras.push("Fib 61.8% Zone");
   if (Math.abs(price - fibs["38.2%"]) < atr * 1.5) extras.push("Fib 38.2% Zone");
   const analysis = isBullish
-    ? `Price at Fib golden pocket (${fibs["61.8%"].toFixed(d)}). ${candlePatterns[0]} confirms demand. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}, ADX ${adx.toFixed(1)}. Fib extensions: ${fibs["ext_127%"].toFixed(d)} / ${fibs["ext_161%"].toFixed(d)}. Support ${support.toFixed(d)}, resistance ${resistance.toFixed(d)}.`
-    : `Supply rejection at Fib ${fibs["38.2%"].toFixed(d)}. ${candlePatterns[0]} bearish confirmation. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}, ADX ${adx.toFixed(1)}. Targets: ${support.toFixed(d)}. Fib extensions project deeper downside.`;
+    ? `Price at Fib golden pocket (${fibs["61.8%"].toFixed(d)}). ${candlePatterns[0]} confirms demand. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}, ADX ${adx.toFixed(1)}. Williams %R: ${williamsR.toFixed(0)} ${williamsR < -80 ? "(Oversold)" : ""}. Fib extensions: ${fibs["ext_127%"].toFixed(d)} / ${fibs["ext_161%"].toFixed(d)}.`
+    : `Supply rejection at Fib ${fibs["38.2%"].toFixed(d)}. ${candlePatterns[0]} bearish confirmation. RSI ${rsi.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}, ADX ${adx.toFixed(1)}. Williams %R: ${williamsR.toFixed(0)} ${williamsR > -20 ? "(Overbought)" : ""}. Targets: ${support.toFixed(d)}.`;
   return buildStrategy("Supply & Demand + Fibonacci", isBullish, conf, trend, rsi, atr, price, support, resistance, macd, stoch, adx, bb, candlePatterns, d, 1.8, 2.5, 4.0, 6.0, extras, analysis);
 }
 
 function runWyckoff(
   trend: string, rsi: number, atr: number, price: number, support: number, resistance: number,
   candlePatterns: string[], macd: ReturnType<typeof calcMACD>, stoch: ReturnType<typeof calcStochastic>,
-  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number
+  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number,
+  williamsR: number, momentumBias: number, vwap: number, sessionWeight: number
 ): StrategyResult {
   const isBullish = trend === "BULLISH" || (trend === "SIDEWAYS" && rsi < 38 && stoch.k < 25);
   const nearZone = isBullish ? Math.abs(price - support) < atr * 2 : Math.abs(price - resistance) < atr * 2;
-  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone);
+  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone, williamsR, momentumBias, vwap, sessionWeight);
   const phase = isBullish ? "Accumulation (Spring)" : "Distribution (LPSY)";
   const harmonic = isBullish ? "Bullish Bat" : "Bearish Gartley";
   const analysis = isBullish
-    ? `Wyckoff ${phase} at ${support.toFixed(d)}. ${harmonic} D-point. RSI ${rsi.toFixed(1)}, Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)} crossing up. ${candlePatterns[0]} confirms. ADX ${adx.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. Target: ${resistance.toFixed(d)}.`
-    : `Wyckoff ${phase} at ${resistance.toFixed(d)}. ${harmonic} rejection. RSI ${rsi.toFixed(1)}, Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)} crossing down. ${candlePatterns[0]}. ADX ${adx.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. Target: ${support.toFixed(d)}.`;
+    ? `Wyckoff ${phase} at ${support.toFixed(d)}. ${harmonic} D-point. RSI ${rsi.toFixed(1)}, Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)} crossing up. ${candlePatterns[0]} confirms. ADX ${adx.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. Momentum bias: ${momentumBias > 0 ? "bullish" : "neutral"}. Target: ${resistance.toFixed(d)}.`
+    : `Wyckoff ${phase} at ${resistance.toFixed(d)}. ${harmonic} rejection. RSI ${rsi.toFixed(1)}, Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)} crossing down. ${candlePatterns[0]}. ADX ${adx.toFixed(1)}, MACD ${macd.histogram.toFixed(d)}. Momentum bias: ${momentumBias < 0 ? "bearish" : "neutral"}. Target: ${support.toFixed(d)}.`;
   return buildStrategy("Wyckoff + Harmonic Patterns", isBullish, conf, trend, rsi, atr, price, support, resistance, macd, stoch, adx, bb, candlePatterns, d, 2.0, 3.0, 4.5, 6.5, [phase, harmonic], analysis);
 }
 
 function runElliott(
   trend: string, rsi: number, atr: number, price: number, support: number, resistance: number,
   candlePatterns: string[], macd: ReturnType<typeof calcMACD>, stoch: ReturnType<typeof calcStochastic>,
-  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number
+  adx: number, bb: ReturnType<typeof calcBollingerBands>, d: number,
+  williamsR: number, momentumBias: number, vwap: number, sessionWeight: number
 ): StrategyResult {
   const isBullish = trend === "BULLISH" || (trend === "SIDEWAYS" && rsi < 42 && macd.histogram > 0);
   const nearZone = isBullish ? Math.abs(price - support) < atr * 2 : Math.abs(price - resistance) < atr * 2;
-  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone);
+  const conf = scoreConfluence(isBullish, trend, rsi, macd, stoch, adx, bb, price, candlePatterns, nearZone, williamsR, momentumBias, vwap, sessionWeight);
   const wave = isBullish ? "Wave 3 Impulse" : "Wave C Corrective";
   const sweep = isBullish ? "Liquidity Sweep Low" : "Liquidity Sweep High";
   const analysis = isBullish
-    ? `Elliott ${wave} starting after Wave 2 correction. Liquidity below ${support.toFixed(d)} swept. RSI ${rsi.toFixed(1)} recovering, MACD crossing at ${macd.macd.toFixed(d)}/${macd.signal.toFixed(d)}. ADX ${adx.toFixed(1)} expanding. ${candlePatterns[0]} impulse confirmation. Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)}.`
-    : `Elliott ${wave} after 5-wave completion. Liquidity above ${resistance.toFixed(d)} swept. RSI divergence at ${rsi.toFixed(1)}, MACD bearish ${macd.macd.toFixed(d)}/${macd.signal.toFixed(d)}. ADX ${adx.toFixed(1)}. ${candlePatterns[0]}. Targets: ${support.toFixed(d)}.`;
+    ? `Elliott ${wave} starting after Wave 2 correction. Liquidity below ${support.toFixed(d)} swept. RSI ${rsi.toFixed(1)} recovering, MACD crossing at ${macd.macd.toFixed(d)}/${macd.signal.toFixed(d)}. ADX ${adx.toFixed(1)} expanding. ${candlePatterns[0]}. VWAP: ${vwap.toFixed(d)}. Stoch ${stoch.k.toFixed(0)}/${stoch.d.toFixed(0)}.`
+    : `Elliott ${wave} after 5-wave completion. Liquidity above ${resistance.toFixed(d)} swept. RSI divergence at ${rsi.toFixed(1)}, MACD bearish ${macd.macd.toFixed(d)}/${macd.signal.toFixed(d)}. ADX ${adx.toFixed(1)}. ${candlePatterns[0]}. VWAP: ${vwap.toFixed(d)}. Targets: ${support.toFixed(d)}.`;
   return buildStrategy("Elliott Wave + Liquidity", isBullish, conf, trend, rsi, atr, price, support, resistance, macd, stoch, adx, bb, candlePatterns, d, 1.6, 2.8, 4.2, 6.0, [wave, sweep], analysis);
 }
 
-// ─── Main Analysis Function (1 API credit) ────────────────────────────
+// ─── Main Analysis Function (1 API credit, cached) ────────────────────
 
 export interface AnalysisInput {
   imageData: string;
@@ -591,7 +681,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const timeframe = ctx.timeframe || "1h";
   const d = pairInfo.decimals;
 
-  // Single API call (1 credit)
+  // Single API call (1 credit) — cached per timeframe
   const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 50);
   const currentPrice = candles[0].close;
   const closes = candles.map(c => c.close);
@@ -608,16 +698,29 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const candlePatterns = detectCandlePatterns(candles);
   const session = getActiveSession();
 
-  // Run all 4 strategies with full confluence scoring
+  // New indicators for enhanced accuracy
+  const williamsR = calcWilliamsR(candles);
+  const momentumBias = calcMomentumBias(candles);
+  const vwap = calcVWAP(candles);
+
+  // Run all 4 strategies with enhanced confluence scoring
   const strategies = [
-    runSMC(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d),
-    runFibSD(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d),
-    runWyckoff(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d),
-    runElliott(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d),
+    runSMC(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
+    runFibSD(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
+    runWyckoff(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
+    runElliott(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
   ];
 
+  // Pick best by confidence, with session-weighted tiebreaker
   strategies.sort((a, b) => b.confidence - a.confidence);
   const best = strategies[0];
+
+  // Direction consensus: if 3+ strategies agree, boost confidence
+  const directionVotes = strategies.filter(s => s.direction === best.direction).length;
+  let finalConfidence = best.confidence;
+  if (directionVotes >= 4) finalConfidence = Math.min(96, finalConfidence + 5);
+  else if (directionVotes >= 3) finalConfidence = Math.min(96, finalConfidence + 3);
+  else if (directionVotes <= 1) finalConfidence = Math.max(35, finalConfidence - 5);
 
   const isBuy = best.direction === "BUY";
   const entry = currentPrice;
@@ -650,16 +753,21 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     takeProfit2: tp2.toFixed(d),
     takeProfit3: tp3.toFixed(d),
     riskReward: `1:${rr}`,
-    confidence: best.confidence,
+    confidence: finalConfidence,
     strategy: best.name,
     patterns: best.patterns,
-    indicators: best.indicators,
-    analysis: best.analysis,
+    indicators: [
+      ...best.indicators,
+      `W%R: ${williamsR.toFixed(0)}`,
+      `VWAP: ${vwap.toFixed(d)}`,
+    ],
+    analysis: `${best.analysis} | Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.`,
     keyLevels: [
       `${support.toFixed(d)} Support`,
       `${fibs["50.0%"].toFixed(d)} Fib 50%`,
       `${resistance.toFixed(d)} Resistance`,
       `${session.name} (${session.volatility})`,
+      `VWAP: ${vwap.toFixed(d)}`,
     ],
     trend,
     candles,
