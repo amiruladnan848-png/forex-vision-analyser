@@ -673,12 +673,18 @@ export interface AnalysisInput {
   imageData: string;
   apiKey: string;
   pair: string;
-  timeframe?: string;
+  timeframe?: string; // "auto" or specific TF — defaults to auto (1h)
+}
+
+// Auto-pick timeframe: 1h is best balance of detail + cost (1 credit, cached 45min)
+function resolveTimeframe(tf?: string): string {
+  if (!tf || tf === "auto") return "1h";
+  return tf;
 }
 
 export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => {
   const pairInfo = PAIRS_MAP[ctx.pair] || PAIRS_MAP["EUR/USD"];
-  const timeframe = ctx.timeframe || "1h";
+  const timeframe = resolveTimeframe(ctx.timeframe);
   const d = pairInfo.decimals;
 
   // Single API call (1 credit) — cached per timeframe
