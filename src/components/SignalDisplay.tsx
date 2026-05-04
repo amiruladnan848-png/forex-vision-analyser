@@ -437,7 +437,7 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
     link.click();
   }, [signal]);
 
-  if (!hasImage && !hasCandles) return null;
+  if (!hasImage) return null;
 
   return (
     <motion.div
