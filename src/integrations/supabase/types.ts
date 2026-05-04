@@ -71,6 +71,36 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_usage: {
+        Row: {
+          confidence: number | null
+          direction: string | null
+          id: string
+          pair: string
+          timeframe: string | null
+          used_at: string
+          user_id: string
+        }
+        Insert: {
+          confidence?: number | null
+          direction?: string | null
+          id?: string
+          pair: string
+          timeframe?: string | null
+          used_at?: string
+          user_id: string
+        }
+        Update: {
+          confidence?: number | null
+          direction?: string | null
+          id?: string
+          pair?: string
+          timeframe?: string | null
+          used_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           id: string
@@ -94,6 +124,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_daily_signal_count: { Args: { _user_id: string }; Returns: number }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

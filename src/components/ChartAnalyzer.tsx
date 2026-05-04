@@ -1,30 +1,28 @@
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown } from "lucide-react";
+import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown, Gauge } from "lucide-react";
 import SignalDisplay, { type Signal } from "./SignalDisplay";
 import { analyzeChartImage, PAIRS_MAP } from "@/lib/analysisEngine";
+import { useDailySignalUsage, DAILY_SIGNAL_LIMIT } from "@/hooks/useDailySignalUsage";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
 
 interface ChartAnalyzerProps {
   apiKey: string;
 }
 
-const TIMEFRAMES = ["1min", "5min", "15min", "30min", "1h", "4h", "1day", "1week"];
-const TF_LABELS: Record<string, string> = {
-  "1min": "M1", "5min": "M5", "15min": "M15", "30min": "M30",
-  "1h": "H1", "4h": "H4", "1day": "D1", "1week": "W1",
-};
-
 const forexPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "forex").map(([k]) => k);
 const cryptoPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "crypto").map(([k]) => k);
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
+  const { isAdmin } = useAuth();
+  const { count, remaining, canAnalyze, recordUsage } = useDailySignalUsage();
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [signal, setSignal] = useState<Signal | null>(null);
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [selectedPair, setSelectedPair] = useState("EUR/USD");
-  const [selectedTimeframe, setSelectedTimeframe] = useState("1h");
   const [marketTab, setMarketTab] = useState<"forex" | "crypto">("forex");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -41,11 +39,21 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
   const handleAnalyze = async () => {
     if (!image || !apiKey) return;
+    if (!canAnalyze) {
+      toast.error(`Daily limit reached: ${DAILY_SIGNAL_LIMIT} signals/24h. Try again later.`);
+      return;
+    }
     setAnalyzing(true);
     setError("");
     try {
-      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe: selectedTimeframe });
+      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe: "auto" });
       setSignal(result);
+      await recordUsage({
+        pair: selectedPair,
+        timeframe: result.timeframe,
+        direction: result.direction,
+        confidence: result.confidence,
+      });
     } catch (err: any) {
       setError(err.message || "Analysis failed");
     } finally {
@@ -57,6 +65,40 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
   return (
     <div className="space-y-4">
+      {/* Daily Usage Meter */}
+      <motion.div
+        className="terminal-card p-3 flex items-center gap-3"
+        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      >
+        <Gauge className="w-4 h-4 text-primary" />
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-display text-[10px] tracking-widest text-muted-foreground">
+              DAILY SIGNAL USAGE
+            </span>
+            <span className="font-mono text-xs">
+              {isAdmin ? (
+                <span className="text-accent">UNLIMITED (ADMIN)</span>
+              ) : (
+                <span className={remaining === 0 ? "text-destructive" : "text-primary"}>
+                  {count}/{DAILY_SIGNAL_LIMIT} • {remaining} left
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+            <motion.div
+              className={`h-full rounded-full ${
+                isAdmin ? "bg-accent" : count >= DAILY_SIGNAL_LIMIT ? "bg-destructive" : "bg-primary"
+              }`}
+              initial={{ width: 0 }}
+              animate={{ width: isAdmin ? "100%" : `${Math.min(100, (count / DAILY_SIGNAL_LIMIT) * 100)}%` }}
+              transition={{ duration: 0.6 }}
+            />
+          </div>
+        </div>
+      </motion.div>
+
       {/* Market Type Tabs */}
       <motion.div className="flex gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
         {(["forex", "crypto"] as const).map(tab => (
@@ -77,7 +119,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         ))}
       </motion.div>
 
-      {/* Pair & Timeframe Selector */}
+      {/* Pair Selector (timeframe auto-detected) */}
       <motion.div className="terminal-card p-4 flex flex-wrap gap-3 items-end"
         initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.2 }}
       >
@@ -97,22 +139,8 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           </div>
         </div>
-        <div className="min-w-[140px]">
-          <label className="font-display text-[10px] tracking-widest text-muted-foreground mb-1 block">TIMEFRAME</label>
-          <div className="flex gap-1 flex-wrap">
-            {TIMEFRAMES.map(tf => (
-              <motion.button key={tf} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
-                onClick={() => { setSelectedTimeframe(tf); setSignal(null); }}
-                className={`px-2 py-1.5 rounded text-xs font-mono transition-all ${
-                  selectedTimeframe === tf
-                    ? "bg-primary text-primary-foreground shadow-[0_0_10px_hsl(175_100%_45%/0.25)]"
-                    : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                {TF_LABELS[tf]}
-              </motion.button>
-            ))}
-          </div>
+        <div className="px-3 py-2 rounded-md bg-accent/10 border border-accent/30 text-accent font-mono text-[11px] tracking-wider">
+          ⚡ TIMEFRAME: AUTO • Works on any chart
         </div>
       </motion.div>
 
@@ -140,7 +168,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
               <div className="text-center">
                 <p className="font-display text-sm font-semibold tracking-wider">DROP CHART SCREENSHOT</p>
                 <p className="font-mono text-xs text-muted-foreground mt-1">or click to upload • PNG, JPG, WEBP</p>
-                <p className="font-mono text-[10px] text-muted-foreground/60 mt-2">Select pair & timeframe above • Supports Forex & Crypto</p>
+                <p className="font-mono text-[10px] text-muted-foreground/60 mt-2">Any timeframe supported • Forex & Crypto</p>
               </div>
             </motion.div>
           ) : (
@@ -156,16 +184,16 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
               <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <ImageIcon className="w-4 h-4 text-primary" />
-                  <span className="font-mono text-xs text-muted-foreground">{selectedPair} • {TF_LABELS[selectedTimeframe]} • Ready</span>
+                  <span className="font-mono text-xs text-muted-foreground">{selectedPair} • Auto-TF • Ready</span>
                 </div>
                 <motion.button
                   whileHover={{ scale: 1.05, boxShadow: "0 0 25px hsl(175 100% 45% / 0.5)" }}
                   whileTap={{ scale: 0.95 }}
                   onClick={(e) => { e.stopPropagation(); handleAnalyze(); }}
-                  disabled={analyzing}
+                  disabled={analyzing || !canAnalyze}
                   className="flex items-center gap-2 px-6 py-2.5 rounded-md bg-primary text-primary-foreground font-display text-sm font-semibold tracking-wider disabled:opacity-50 transition-all shadow-[0_0_15px_hsl(175_100%_45%/0.2)]"
                 >
-                  {analyzing ? <><Loader2 className="w-4 h-4 animate-spin" />ANALYZING...</> : <><Crosshair className="w-4 h-4" />ANALYZE CHART</>}
+                  {analyzing ? <><Loader2 className="w-4 h-4 animate-spin" />ANALYZING...</> : <><Crosshair className="w-4 h-4" />{canAnalyze ? "ANALYZE CHART" : "DAILY LIMIT REACHED"}</>}
                 </motion.button>
               </div>
             </motion.div>
@@ -179,16 +207,16 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
           <motion.div className="terminal-card p-6 overflow-hidden relative" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
             <div className="flex items-center gap-3">
               <motion.div className="w-3 h-3 rounded-full bg-primary" animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1 }} />
-              <span className="font-display text-sm tracking-wider">ANALYZING {selectedPair} ({TF_LABELS[selectedTimeframe]})...</span>
+              <span className="font-display text-sm tracking-wider">ANALYZING {selectedPair}...</span>
             </div>
             <div className="mt-4 space-y-2">
               {[
-                `Fetching ${selectedPair} OHLC market data...`,
-                "Computing RSI, MACD, Stochastic, ADX, Bollinger Bands...",
-                "Detecting candlestick patterns & market structure...",
-                "Running 4-strategy confluence analysis (SMC, Fib, Wyckoff, Elliott)...",
-                "Calculating optimal Entry, SL & TP with ATR precision...",
-                "Drawing signal chart with level visualization...",
+                `Fetching ${selectedPair} live OHLC data...`,
+                "Computing RSI, MACD, Stochastic, ADX, Bollinger Bands, VWAP, W%R...",
+                "Detecting Supply/Demand zones, FVG, Order Blocks, Liquidity sweeps...",
+                "Running 4-strategy confluence (SMC + ICT, Fib S/D, Wyckoff, Elliott)...",
+                "Calculating Entry, SL & TPs with ATR precision...",
+                "Drawing signal overlay on your screenshot...",
               ].map((t, i) => (
                 <motion.div key={i} className="font-mono text-xs text-muted-foreground" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.4 }}>
                   {">"} {t}

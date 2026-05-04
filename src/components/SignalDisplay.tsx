@@ -61,11 +61,11 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
     canvas.style.height = `${H}px`;
     ctx.scale(2, 2);
 
-    // Draw screenshot as background
+    // Draw screenshot as background — KEEP IT VISIBLE
     if (img) {
       ctx.drawImage(img, 0, 0, W, H);
-      // Semi-transparent overlay for readability
-      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      // Very light overlay so user's chart stays readable
+      ctx.fillStyle = "rgba(0,0,0,0.05)";
       ctx.fillRect(0, 0, W, H);
     } else {
       ctx.fillStyle = "#0a0e14";
@@ -293,20 +293,8 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
       ctx.fillRect(padL, bbTopY, chartW, bbBotY - bbTopY);
     }
 
-    // ── Candlesticks ──
-    const cW = Math.max(3, chartW / candles.length - 1.5);
-    candles.forEach((c, i) => {
-      const x = padL + i * (chartW / candles.length) + 1;
-      const bull = c.close >= c.open;
-      const bodyTop = yScale(Math.max(c.open, c.close));
-      const bodyBot = yScale(Math.min(c.open, c.close));
-      const bH = Math.max(1, bodyBot - bodyTop);
-      ctx.strokeStyle = bull ? "rgba(0,210,130,0.7)" : "rgba(255,70,70,0.7)";
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x + cW / 2, yScale(c.high)); ctx.lineTo(x + cW / 2, yScale(c.low)); ctx.stroke();
-      ctx.fillStyle = bull ? "rgba(0,210,130,0.85)" : "rgba(255,70,70,0.85)";
-      ctx.fillRect(x, bodyTop, cW * 0.8, bH);
-    });
+    // ── NO simulated candles drawn — overlay zones only on user screenshot ──
+
 
     // ── EMA trend lines ──
     if (signal.ema8 && signal.ema21) {
@@ -449,7 +437,7 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
     link.click();
   }, [signal]);
 
-  if (!hasImage && !hasCandles) return null;
+  if (!hasImage) return null;
 
   return (
     <motion.div
