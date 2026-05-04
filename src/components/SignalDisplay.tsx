@@ -61,11 +61,11 @@ const SignalChart = ({ signal }: { signal: Signal }) => {
     canvas.style.height = `${H}px`;
     ctx.scale(2, 2);
 
-    // Draw screenshot as background
+    // Draw screenshot as background — KEEP IT VISIBLE
     if (img) {
       ctx.drawImage(img, 0, 0, W, H);
-      // Semi-transparent overlay for readability
-      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      // Very light overlay so user's chart stays readable
+      ctx.fillStyle = "rgba(0,0,0,0.05)";
       ctx.fillRect(0, 0, W, H);
     } else {
       ctx.fillStyle = "#0a0e14";
