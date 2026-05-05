@@ -737,22 +737,18 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     : normalizeTimeframe(ctx.timeframe);
   const d = pairInfo.decimals;
 
-  // Single API call (1 credit) — cached per timeframe
-  const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 50);
-  const currentPrice = candles[0].close;
-  const closes = candles.map(c => c.close);
+  // Parallel: HTF candles for confluence + AI vision deep analysis
+  const htfTF = HTF_MAP[timeframe] || "4h";
+  const [htfCandles, vision] = await Promise.all([
+    htfTF !== timeframe
+      ? fetchOHLC(pairInfo.symbol, ctx.apiKey, htfTF, 50).catch(() => null)
+      : Promise.resolve(null),
+    visionAnalyzeChart(ctx.imageData, ctx.pair, timeframe),
+  ]);
+  const htfTrend = htfCandles ? detectTrend(htfCandles) : "SIDEWAYS";
 
-  // ALL real indicators
-  const rsi = calcRSI(closes);
-  const atr = calcATR(candles);
-  const macd = calcMACD(closes);
-  const stoch = calcStochastic(candles);
-  const bb = calcBollingerBands(closes);
-  const adx = calcADX(candles);
-  const { support, resistance } = findSupportResistance(candles);
-  const trend = detectTrend(candles);
-  const candlePatterns = detectCandlePatterns(candles);
-  const session = getActiveSession();
+  // Single API call (1 credit) — cached per timeframe
+
 
   // New indicators for enhanced accuracy
   const williamsR = calcWilliamsR(candles);
