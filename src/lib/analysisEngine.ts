@@ -748,7 +748,23 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const htfTrend = htfCandles ? detectTrend(htfCandles) : "SIDEWAYS";
 
   // Single API call (1 credit) — cached per timeframe
+  const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 50);
+  const currentPrice = candles[0].close;
+  const closes = candles.map(c => c.close);
 
+  // ALL real indicators
+  const rsi = calcRSI(closes);
+  const atr = calcATR(candles);
+  const macd = calcMACD(closes);
+  const stoch = calcStochastic(candles);
+  const bb = calcBollingerBands(closes);
+  const adx = calcADX(candles);
+  const { support, resistance } = findSupportResistance(candles);
+  let trend = detectTrend(candles);
+  // HTF confluence: bias trend toward HTF if mixed
+  if (trend === "SIDEWAYS" && htfTrend !== "SIDEWAYS") trend = htfTrend;
+  const candlePatterns = detectCandlePatterns(candles);
+  const session = getActiveSession();
 
   // New indicators for enhanced accuracy
   const williamsR = calcWilliamsR(candles);
