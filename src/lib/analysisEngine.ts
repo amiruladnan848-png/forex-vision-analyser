@@ -690,10 +690,44 @@ async function detectTimeframeFromImage(imageData: string): Promise<string> {
   }
 }
 
+// Deep AI vision analysis of the screenshot for SMC/ICT structure
+interface VisionAnalysis {
+  bias: "BUY" | "SELL" | "NEUTRAL";
+  confidence: number;
+  trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
+  structure: string;
+  key_observations: string[];
+  risk_warnings?: string[];
+}
+async function visionAnalyzeChart(imageData: string, pair: string, timeframe: string): Promise<VisionAnalysis | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke("vision-analyze", {
+      body: { imageData, pair, timeframe },
+    });
+    if (error || !data || !data.bias) return null;
+    return data as VisionAnalysis;
+  } catch {
+    return null;
+  }
+}
+
+// Map TF -> higher TF for confluence
+const HTF_MAP: Record<string, string> = {
+  "1min": "15min",
+  "5min": "1h",
+  "15min": "4h",
+  "30min": "4h",
+  "1h": "4h",
+  "4h": "1day",
+  "1day": "1week",
+  "1week": "1week",
+};
+
 function normalizeTimeframe(tf?: string): string {
   if (!tf || tf === "auto") return "1h";
   return tf;
 }
+
 
 export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => {
   const pairInfo = PAIRS_MAP[ctx.pair] || PAIRS_MAP["EUR/USD"];
