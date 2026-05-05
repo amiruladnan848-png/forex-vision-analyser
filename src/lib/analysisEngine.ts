@@ -767,7 +767,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
 
   return {
     pair: ctx.pair,
-    timeframe: ctx.timeframe === "auto" || !ctx.timeframe ? "AUTO (H1)" : timeframe.toUpperCase(),
+    timeframe: isAuto ? `AUTO • ${timeframe.toUpperCase()}` : timeframe.toUpperCase(),
     direction: best.direction,
     entry: entry.toFixed(d),
     stopLoss: sl.toFixed(d),
