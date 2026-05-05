@@ -47,7 +47,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
     setAnalyzing(true);
     setError("");
     try {
-      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe: "auto" });
+      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe });
       setSignal(result);
       await recordUsage({
         pair: selectedPair,
