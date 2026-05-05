@@ -1,4 +1,5 @@
 import { type Signal } from "@/components/SignalDisplay";
+import { supabase } from "@/integrations/supabase/client";
 
 // ─── Forex + Crypto Pair Configuration ────────────────────────────────
 
