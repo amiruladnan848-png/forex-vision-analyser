@@ -140,8 +140,25 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
             <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           </div>
         </div>
-        <div className="px-3 py-2 rounded-md bg-accent/10 border border-accent/30 text-accent font-mono text-[11px] tracking-wider">
-          ⚡ TIMEFRAME: AUTO • Works on any chart
+        <div className="min-w-[140px]">
+          <label className="font-display text-[10px] tracking-widest text-muted-foreground mb-1 block">TIMEFRAME</label>
+          <div className="relative">
+            <select value={timeframe}
+              onChange={e => { setTimeframe(e.target.value); setSignal(null); }}
+              className="w-full bg-muted/50 border border-border/50 rounded-md px-3 py-2 font-mono text-sm text-foreground appearance-none cursor-pointer focus:outline-none focus:border-primary/60 transition-colors"
+            >
+              <option value="auto">⚡ AUTO-DETECT</option>
+              <option value="1min">M1</option>
+              <option value="5min">M5</option>
+              <option value="15min">M15</option>
+              <option value="30min">M30</option>
+              <option value="1h">H1</option>
+              <option value="4h">H4</option>
+              <option value="1day">D1</option>
+              <option value="1week">W1</option>
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          </div>
         </div>
       </motion.div>
 
