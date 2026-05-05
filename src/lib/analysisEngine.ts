@@ -781,14 +781,52 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
 
   // Pick best by confidence, with session-weighted tiebreaker
   strategies.sort((a, b) => b.confidence - a.confidence);
-  const best = strategies[0];
+  let best = strategies[0];
 
-  // Direction consensus: if 3+ strategies agree, boost confidence
+  // ── HTF + AI Vision Confluence Override ──────────────────────────────
+  // If AI vision strongly disagrees with the leader but agrees with the runner-up, switch
+  if (vision && vision.bias !== "NEUTRAL" && vision.confidence >= 65) {
+    const aiDir = vision.bias;
+    if (best.direction !== aiDir) {
+      const altMatch = strategies.find(s => s.direction === aiDir);
+      if (altMatch && (vision.confidence >= 75 || altMatch.confidence >= best.confidence - 8)) {
+        best = altMatch;
+      }
+    }
+  }
+
+  // Direction consensus from technical strategies
   const directionVotes = strategies.filter(s => s.direction === best.direction).length;
   let finalConfidence = best.confidence;
-  if (directionVotes >= 4) finalConfidence = Math.min(96, finalConfidence + 5);
-  else if (directionVotes >= 3) finalConfidence = Math.min(96, finalConfidence + 3);
-  else if (directionVotes <= 1) finalConfidence = Math.max(35, finalConfidence - 5);
+  if (directionVotes >= 4) finalConfidence += 6;
+  else if (directionVotes >= 3) finalConfidence += 3;
+  else if (directionVotes <= 1) finalConfidence -= 6;
+
+  // HTF alignment (very important for accuracy)
+  const htfAligned =
+    (best.direction === "BUY" && htfTrend === "BULLISH") ||
+    (best.direction === "SELL" && htfTrend === "BEARISH");
+  const htfOpposed =
+    (best.direction === "BUY" && htfTrend === "BEARISH") ||
+    (best.direction === "SELL" && htfTrend === "BULLISH");
+  if (htfAligned) finalConfidence += 7;
+  else if (htfOpposed) finalConfidence -= 10;
+
+  // AI vision alignment
+  if (vision && vision.bias !== "NEUTRAL") {
+    if (vision.bias === best.direction) {
+      finalConfidence += Math.round(Math.min(10, (vision.confidence - 60) / 4 + 4));
+    } else {
+      finalConfidence -= 8;
+    }
+    if (vision.risk_warnings && vision.risk_warnings.length > 0) finalConfidence -= 3;
+  }
+
+  // Penalize choppy markets
+  if (adx < 18) finalConfidence -= 5;
+
+  finalConfidence = Math.max(40, Math.min(97, finalConfidence));
+
 
   const isBuy = best.direction === "BUY";
   const entry = currentPrice;
