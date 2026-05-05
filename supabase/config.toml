@@ -2,3 +2,6 @@ project_id = "hqdyvltujvylvsdhgrxu"
 
 [functions.detect-timeframe]
 verify_jwt = false
+
+[functions.vision-analyze]
+verify_jwt = false

@@ -690,10 +690,44 @@ async function detectTimeframeFromImage(imageData: string): Promise<string> {
   }
 }
 
+// Deep AI vision analysis of the screenshot for SMC/ICT structure
+interface VisionAnalysis {
+  bias: "BUY" | "SELL" | "NEUTRAL";
+  confidence: number;
+  trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
+  structure: string;
+  key_observations: string[];
+  risk_warnings?: string[];
+}
+async function visionAnalyzeChart(imageData: string, pair: string, timeframe: string): Promise<VisionAnalysis | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke("vision-analyze", {
+      body: { imageData, pair, timeframe },
+    });
+    if (error || !data || !data.bias) return null;
+    return data as VisionAnalysis;
+  } catch {
+    return null;
+  }
+}
+
+// Map TF -> higher TF for confluence
+const HTF_MAP: Record<string, string> = {
+  "1min": "15min",
+  "5min": "1h",
+  "15min": "4h",
+  "30min": "4h",
+  "1h": "4h",
+  "4h": "1day",
+  "1day": "1week",
+  "1week": "1week",
+};
+
 function normalizeTimeframe(tf?: string): string {
   if (!tf || tf === "auto") return "1h";
   return tf;
 }
+
 
 export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => {
   const pairInfo = PAIRS_MAP[ctx.pair] || PAIRS_MAP["EUR/USD"];
@@ -702,6 +736,16 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     ? await detectTimeframeFromImage(ctx.imageData)
     : normalizeTimeframe(ctx.timeframe);
   const d = pairInfo.decimals;
+
+  // Parallel: HTF candles for confluence + AI vision deep analysis
+  const htfTF = HTF_MAP[timeframe] || "4h";
+  const [htfCandles, vision] = await Promise.all([
+    htfTF !== timeframe
+      ? fetchOHLC(pairInfo.symbol, ctx.apiKey, htfTF, 50).catch(() => null)
+      : Promise.resolve(null),
+    visionAnalyzeChart(ctx.imageData, ctx.pair, timeframe),
+  ]);
+  const htfTrend = htfCandles ? detectTrend(htfCandles) : "SIDEWAYS";
 
   // Single API call (1 credit) — cached per timeframe
   const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 50);
@@ -716,7 +760,9 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const bb = calcBollingerBands(closes);
   const adx = calcADX(candles);
   const { support, resistance } = findSupportResistance(candles);
-  const trend = detectTrend(candles);
+  let trend = detectTrend(candles);
+  // HTF confluence: bias trend toward HTF if mixed
+  if (trend === "SIDEWAYS" && htfTrend !== "SIDEWAYS") trend = htfTrend;
   const candlePatterns = detectCandlePatterns(candles);
   const session = getActiveSession();
 
@@ -735,14 +781,52 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
 
   // Pick best by confidence, with session-weighted tiebreaker
   strategies.sort((a, b) => b.confidence - a.confidence);
-  const best = strategies[0];
+  let best = strategies[0];
 
-  // Direction consensus: if 3+ strategies agree, boost confidence
+  // ── HTF + AI Vision Confluence Override ──────────────────────────────
+  // If AI vision strongly disagrees with the leader but agrees with the runner-up, switch
+  if (vision && vision.bias !== "NEUTRAL" && vision.confidence >= 65) {
+    const aiDir = vision.bias;
+    if (best.direction !== aiDir) {
+      const altMatch = strategies.find(s => s.direction === aiDir);
+      if (altMatch && (vision.confidence >= 75 || altMatch.confidence >= best.confidence - 8)) {
+        best = altMatch;
+      }
+    }
+  }
+
+  // Direction consensus from technical strategies
   const directionVotes = strategies.filter(s => s.direction === best.direction).length;
   let finalConfidence = best.confidence;
-  if (directionVotes >= 4) finalConfidence = Math.min(96, finalConfidence + 5);
-  else if (directionVotes >= 3) finalConfidence = Math.min(96, finalConfidence + 3);
-  else if (directionVotes <= 1) finalConfidence = Math.max(35, finalConfidence - 5);
+  if (directionVotes >= 4) finalConfidence += 6;
+  else if (directionVotes >= 3) finalConfidence += 3;
+  else if (directionVotes <= 1) finalConfidence -= 6;
+
+  // HTF alignment (very important for accuracy)
+  const htfAligned =
+    (best.direction === "BUY" && htfTrend === "BULLISH") ||
+    (best.direction === "SELL" && htfTrend === "BEARISH");
+  const htfOpposed =
+    (best.direction === "BUY" && htfTrend === "BEARISH") ||
+    (best.direction === "SELL" && htfTrend === "BULLISH");
+  if (htfAligned) finalConfidence += 7;
+  else if (htfOpposed) finalConfidence -= 10;
+
+  // AI vision alignment
+  if (vision && vision.bias !== "NEUTRAL") {
+    if (vision.bias === best.direction) {
+      finalConfidence += Math.round(Math.min(10, (vision.confidence - 60) / 4 + 4));
+    } else {
+      finalConfidence -= 8;
+    }
+    if (vision.risk_warnings && vision.risk_warnings.length > 0) finalConfidence -= 3;
+  }
+
+  // Penalize choppy markets
+  if (adx < 18) finalConfidence -= 5;
+
+  finalConfidence = Math.max(40, Math.min(97, finalConfidence));
+
 
   const isBuy = best.direction === "BUY";
   const entry = currentPrice;
@@ -782,15 +866,18 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
       ...best.indicators,
       `W%R: ${williamsR.toFixed(0)}`,
       `VWAP: ${vwap.toFixed(d)}`,
+      `HTF(${htfTF}): ${htfTrend}`,
+      vision ? `AI Vision: ${vision.bias} (${vision.confidence})` : "AI Vision: n/a",
     ],
-    analysis: `${best.analysis} | Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.`,
+    analysis: `${best.analysis} | HTF ${htfTF} trend: ${htfTrend} (${htfAligned ? "ALIGNED ✓" : htfOpposed ? "OPPOSED ✗" : "neutral"}). ${vision ? `AI vision sees ${vision.bias} @ ${vision.confidence}% — ${vision.structure}. Key: ${(vision.key_observations || []).slice(0, 3).join("; ")}.` : ""} Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.`,
     keyLevels: [
       `${support.toFixed(d)} Support`,
       `${fibs["50.0%"].toFixed(d)} Fib 50%`,
       `${resistance.toFixed(d)} Resistance`,
+      `HTF ${htfTF}: ${htfTrend}`,
       `${session.name} (${session.volatility})`,
-      `VWAP: ${vwap.toFixed(d)}`,
     ],
+
     trend,
     candles,
     bbUpper: bb.upper,
