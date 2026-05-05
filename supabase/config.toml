@@ -1,1 +1,4 @@
 project_id = "hqdyvltujvylvsdhgrxu"
+
+[functions.detect-timeframe]
+verify_jwt = false
