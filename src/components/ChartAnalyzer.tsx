@@ -24,6 +24,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
   const [dragOver, setDragOver] = useState(false);
   const [selectedPair, setSelectedPair] = useState("EUR/USD");
   const [marketTab, setMarketTab] = useState<"forex" | "crypto">("forex");
+  const [timeframe, setTimeframe] = useState<string>("auto");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback((file: File) => {
