@@ -677,15 +677,30 @@ export interface AnalysisInput {
   timeframe?: string; // "auto" or specific TF — defaults to auto (1h)
 }
 
-// Auto-pick timeframe: 1h is best balance of detail + cost (1 credit, cached 45min)
-function resolveTimeframe(tf?: string): string {
+// Auto-detect timeframe from screenshot via Lovable AI vision
+async function detectTimeframeFromImage(imageData: string): Promise<string> {
+  try {
+    const { data, error } = await supabase.functions.invoke("detect-timeframe", {
+      body: { imageData },
+    });
+    if (error || !data?.timeframe) return "1h";
+    return data.timeframe as string;
+  } catch {
+    return "1h";
+  }
+}
+
+function normalizeTimeframe(tf?: string): string {
   if (!tf || tf === "auto") return "1h";
   return tf;
 }
 
 export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => {
   const pairInfo = PAIRS_MAP[ctx.pair] || PAIRS_MAP["EUR/USD"];
-  const timeframe = resolveTimeframe(ctx.timeframe);
+  const isAuto = !ctx.timeframe || ctx.timeframe === "auto";
+  const timeframe = isAuto
+    ? await detectTimeframeFromImage(ctx.imageData)
+    : normalizeTimeframe(ctx.timeframe);
   const d = pairInfo.decimals;
 
   // Single API call (1 credit) — cached per timeframe
