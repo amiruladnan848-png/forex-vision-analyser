@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import Header from "@/components/Header";
 import MarketSessions from "@/components/MarketSessions";
 import ChartAnalyzer from "@/components/ChartAnalyzer";
+import BinarySignalPanel from "@/components/BinarySignalPanel";
 import OwnerBadge from "@/components/OwnerBadge";
 import OwnerBackdrop from "@/components/OwnerBackdrop";
 import MoneyManagementRules from "@/components/MoneyManagementRules";
