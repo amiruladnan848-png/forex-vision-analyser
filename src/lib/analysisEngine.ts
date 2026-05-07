@@ -677,21 +677,9 @@ export interface AnalysisInput {
   timeframe?: string; // "auto" or specific TF — defaults to auto (1h)
 }
 
-// Auto-detect timeframe from screenshot via Lovable AI vision
-async function detectTimeframeFromImage(imageData: string): Promise<string> {
-  try {
-    const { data, error } = await supabase.functions.invoke("detect-timeframe", {
-      body: { imageData },
-    });
-    if (error || !data?.timeframe) return "1h";
-    return data.timeframe as string;
-  } catch {
-    return "1h";
-  }
-}
-
-// Deep AI vision analysis of the screenshot for SMC/ICT structure
-interface VisionAnalysis {
+// Combined: detect timeframe + deep SMC/ICT vision in ONE cheap AI call
+interface ChartVision {
+  timeframe: string;
   bias: "BUY" | "SELL" | "NEUTRAL";
   confidence: number;
   trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
@@ -699,13 +687,13 @@ interface VisionAnalysis {
   key_observations: string[];
   risk_warnings?: string[];
 }
-async function visionAnalyzeChart(imageData: string, pair: string, timeframe: string): Promise<VisionAnalysis | null> {
+async function chartVision(imageData: string, pair: string): Promise<ChartVision | null> {
   try {
-    const { data, error } = await supabase.functions.invoke("vision-analyze", {
-      body: { imageData, pair, timeframe },
+    const { data, error } = await supabase.functions.invoke("chart-vision", {
+      body: { imageData, pair },
     });
-    if (error || !data || !data.bias) return null;
-    return data as VisionAnalysis;
+    if (error || !data?.timeframe) return null;
+    return data as ChartVision;
   } catch {
     return null;
   }
