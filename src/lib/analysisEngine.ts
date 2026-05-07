@@ -720,23 +720,28 @@ function normalizeTimeframe(tf?: string): string {
 export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => {
   const pairInfo = PAIRS_MAP[ctx.pair] || PAIRS_MAP["EUR/USD"];
   const isAuto = !ctx.timeframe || ctx.timeframe === "auto";
-  const timeframe = isAuto
-    ? await detectTimeframeFromImage(ctx.imageData)
-    : normalizeTimeframe(ctx.timeframe);
   const d = pairInfo.decimals;
 
-  // Parallel: HTF candles for confluence + AI vision deep analysis
+  // ONE combined AI call: timeframe detection + SMC/ICT deep analysis (saves credits vs 2 calls)
+  const vision = await chartVision(ctx.imageData, ctx.pair);
+  const timeframe = isAuto ? (vision?.timeframe || "1h") : normalizeTimeframe(ctx.timeframe);
   const htfTF = HTF_MAP[timeframe] || "4h";
-  const [htfCandles, vision] = await Promise.all([
-    htfTF !== timeframe
-      ? fetchOHLC(pairInfo.symbol, ctx.apiKey, htfTF, 50).catch(() => null)
-      : Promise.resolve(null),
-    visionAnalyzeChart(ctx.imageData, ctx.pair, timeframe),
-  ]);
-  const htfTrend = htfCandles ? detectTrend(htfCandles) : "SIDEWAYS";
 
-  // Single API call (1 credit) — cached per timeframe
-  const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 50);
+  // Single market-data API call (1 credit). HTF derived locally — no extra credit.
+  const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 100);
+  const htfCandles: OHLC[] = [];
+  for (let i = 0; i + 4 <= candles.length; i += 4) {
+    const slice = candles.slice(i, i + 4);
+    htfCandles.push({
+      open: slice[slice.length - 1].open,
+      close: slice[0].close,
+      high: Math.max(...slice.map(c => c.high)),
+      low: Math.min(...slice.map(c => c.low)),
+      datetime: slice[0].datetime,
+    });
+  }
+  const htfTrend = htfCandles.length >= 21 ? detectTrend(htfCandles) : "SIDEWAYS";
+
   const currentPrice = candles[0].close;
   const closes = candles.map(c => c.close);
 
