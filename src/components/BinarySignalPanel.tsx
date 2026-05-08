@@ -54,7 +54,6 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
       setSignal(s);
       await recordUsage({
         pair,
-        timeframe: "1min",
         direction: s.direction,
         confidence: s.confidence,
       });
