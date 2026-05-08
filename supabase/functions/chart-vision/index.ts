@@ -1,5 +1,5 @@
-// Combined chart vision: detects timeframe AND deep SMC/ICT structure in ONE AI call.
-// Replaces detect-timeframe + vision-analyze. Uses cheap gemini-2.5-flash-lite to keep credits low.
+// Combined chart vision: detects timeframe + deep SMC/ICT/PA/FVG/Liquidity in ONE AI call.
+// Uses gemini-2.5-flash-lite for low credit cost. Strict, decisive output for accurate signals.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,32 +22,52 @@ Deno.serve(async (req) => {
         function: {
           name: "report_chart_analysis",
           description:
-            "Detect chart timeframe AND report SMC/ICT structure in one go.",
+            "Forensic forex/crypto chart read: timeframe + SMC/ICT/PA structure + actionable bias.",
           parameters: {
             type: "object",
             properties: {
               timeframe: {
                 type: "string",
                 enum: ["1min", "5min", "15min", "30min", "1h", "4h", "1day", "1week"],
-                description: "Detected chart timeframe.",
+                description: "Detected from x-axis time labels.",
               },
               bias: { type: "string", enum: ["BUY", "SELL", "NEUTRAL"] },
-              confidence: { type: "number", description: "0-100" },
+              confidence: { type: "number", description: "0-100. Use NEUTRAL if <55." },
               trend: { type: "string", enum: ["BULLISH", "BEARISH", "SIDEWAYS"] },
-              structure: { type: "string", description: "BOS / CHoCH / accumulation / distribution / range." },
+              structure: { type: "string", description: "BOS / CHoCH / accumulation / distribution / range / trending." },
+              last_candle_action: { type: "string", description: "What the last 1-3 candles did: rejection, engulfing, breakout, retest, sweep, etc." },
+              fvg_present: { type: "boolean", description: "Unfilled fair value gap visible near price." },
+              order_block_present: { type: "boolean", description: "Clear OB visible near price." },
+              liquidity_swept: { type: "boolean", description: "Recent buy-side or sell-side liquidity sweep." },
+              supply_demand_zone: { type: "string", description: "Price location vs nearest S/D zone: 'in-demand' | 'in-supply' | 'mid-range' | 'breaking-out'." },
               key_observations: {
                 type: "array",
                 items: { type: "string" },
-                description: "3-5 short observations: FVG, OB, liquidity, S/D, candle pattern.",
+                description: "4-6 short evidence-based observations from the chart.",
               },
-              risk_warnings: { type: "array", items: { type: "string" } },
+              risk_warnings: { type: "array", items: { type: "string" }, description: "Reasons to skip the trade if any." },
+              no_trade: { type: "boolean", description: "True if chart is too unclear or in chop." },
             },
-            required: ["timeframe", "bias", "confidence", "trend", "structure", "key_observations"],
+            required: ["timeframe", "bias", "confidence", "trend", "structure", "last_candle_action", "supply_demand_zone", "key_observations", "no_trade"],
             additionalProperties: false,
           },
         },
       },
     ];
+
+    const systemPrompt = `You are a top-tier institutional forex/crypto chart analyst with 15+ years on SMC, ICT, Wyckoff and pure price action.
+You will receive a single chart screenshot. Your job is to read the chart FORENSICALLY:
+
+1. TIMEFRAME — read x-axis labels precisely.
+2. STRUCTURE — identify BOS/CHoCH, swing highs/lows, current trend direction (HH/HL = bullish, LH/LL = bearish).
+3. PRICE ACTION — describe the latest 1–3 candles (rejection wick, engulfing, inside bar, breakout, retest).
+4. SMC/ICT — flag visible Fair Value Gaps, Order Blocks, equal highs/lows (liquidity), liquidity sweeps/stop hunts.
+5. SUPPLY/DEMAND — locate price relative to the nearest unmitigated S/D zone.
+6. BIAS — only BUY or SELL when there is CLEAR evidence (e.g. sweep + FVG fill + OB rejection in same direction). Otherwise NEUTRAL.
+7. NO-TRADE — set true if range-bound chop, mid-range, no clear setup, or conflicting signals.
+8. CONFIDENCE — be honest. Strong A+ setup = 80–92. Decent = 65–79. Marginal = 55–64. Weak/unclear = NEUTRAL with 0–54.
+
+NEVER invent signals. NEVER give a directional bias just to be helpful. A "no_trade=true, bias=NEUTRAL" answer is correct and valuable when the chart doesn't show a clean setup. Be ruthless and specific.`;
 
     const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -56,19 +76,15 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash-lite",
+        model: "google/gemini-2.5-flash",
         messages: [
-          {
-            role: "system",
-            content:
-              "You are an elite SMC/ICT chart analyst. In ONE response: (1) detect timeframe from x-axis labels, (2) identify trend, BOS/CHoCH, FVG, order blocks, liquidity, supply/demand, candle reaction. Be DECISIVE — only NEUTRAL if structure is genuinely unclear; otherwise BUY/SELL with realistic 60-92 confidence.",
-          },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: `Analyze this ${pair || "forex"} chart screenshot. Return verdict via report_chart_analysis tool.`,
+                text: `Analyze this ${pair || "forex/crypto"} chart screenshot forensically and return your verdict via report_chart_analysis. If the chart does not show a clean institutional setup, return no_trade=true and bias=NEUTRAL — do not force a signal.`,
               },
               { type: "image_url", image_url: { url: imageData } },
             ],
@@ -82,7 +98,7 @@ Deno.serve(async (req) => {
     if (!resp.ok) {
       if (resp.status === 429 || resp.status === 402) {
         return new Response(
-          JSON.stringify({ timeframe: "1h", bias: "NEUTRAL", confidence: 0, trend: "SIDEWAYS", structure: "rate_limited", key_observations: [] }),
+          JSON.stringify({ timeframe: "1h", bias: "NEUTRAL", confidence: 0, trend: "SIDEWAYS", structure: "rate_limited", last_candle_action: "n/a", supply_demand_zone: "mid-range", key_observations: [], no_trade: true, _rate_limited: true }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
         );
       }
@@ -99,7 +115,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     return new Response(
-      JSON.stringify({ timeframe: "1h", bias: "NEUTRAL", confidence: 0, trend: "SIDEWAYS", structure: "unavailable", key_observations: [], error: (e as Error).message }),
+      JSON.stringify({ timeframe: "1h", bias: "NEUTRAL", confidence: 0, trend: "SIDEWAYS", structure: "unavailable", last_candle_action: "n/a", supply_demand_zone: "mid-range", key_observations: [], no_trade: true, error: (e as Error).message }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
     );
   }
