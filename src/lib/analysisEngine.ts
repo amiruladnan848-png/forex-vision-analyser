@@ -684,8 +684,22 @@ interface ChartVision {
   confidence: number;
   trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
   structure: string;
+  last_candle_action?: string;
+  fvg_present?: boolean;
+  order_block_present?: boolean;
+  liquidity_swept?: boolean;
+  supply_demand_zone?: string;
   key_observations: string[];
   risk_warnings?: string[];
+  no_trade?: boolean;
+  _rate_limited?: boolean;
+}
+
+export class NoTradeError extends Error {
+  constructor(message: string, public details: { observations: string[]; warnings: string[] }) {
+    super(message);
+    this.name = "NoTradeError";
+  }
 }
 async function chartVision(imageData: string, pair: string): Promise<ChartVision | null> {
   try {
@@ -772,53 +786,72 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     runElliott(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
   ];
 
-  // Pick best by confidence, with session-weighted tiebreaker
-  strategies.sort((a, b) => b.confidence - a.confidence);
-  let best = strategies[0];
+  // ── PRIMARY DECISION: AI VISION READS THE ACTUAL SCREENSHOT ──────────
+  // The AI vision is the ONLY component that actually sees the user's chart.
+  // Live indicators are used as CONFIRMATION, not as the source of truth.
 
-  // ── HTF + AI Vision Confluence Override ──────────────────────────────
-  // If AI vision strongly disagrees with the leader but agrees with the runner-up, switch
-  if (vision && vision.bias !== "NEUTRAL" && vision.confidence >= 65) {
-    const aiDir = vision.bias;
-    if (best.direction !== aiDir) {
-      const altMatch = strategies.find(s => s.direction === aiDir);
-      if (altMatch && (vision.confidence >= 75 || altMatch.confidence >= best.confidence - 8)) {
-        best = altMatch;
-      }
+  // Hard NO-TRADE gate from the chart itself
+  if (vision && !vision._rate_limited) {
+    if (vision.no_trade || vision.bias === "NEUTRAL" || vision.confidence < 55) {
+      throw new NoTradeError(
+        "Chart does not show a clean institutional setup right now. Skip this trade.",
+        {
+          observations: vision.key_observations || [],
+          warnings: vision.risk_warnings || ["No clear BOS/CHoCH", "Price in mid-range or chop", "Wait for clean sweep + FVG/OB rejection"],
+        }
+      );
     }
   }
 
-  // Direction consensus from technical strategies
+  // Pick best technical strategy that AGREES with the AI vision
+  strategies.sort((a, b) => b.confidence - a.confidence);
+  let best = strategies[0];
+  if (vision && vision.bias !== "NEUTRAL") {
+    const aligned = strategies
+      .filter(s => s.direction === vision.bias)
+      .sort((a, b) => b.confidence - a.confidence);
+    if (aligned.length > 0) {
+      best = aligned[0];
+      // Force final direction to follow the chart screenshot, not pure indicators
+      best = { ...best, direction: vision.bias };
+    } else {
+      // No technical strategy agrees with the chart → still trust the chart but heavily reduce confidence
+      best = { ...strategies[0], direction: vision.bias, confidence: Math.max(55, vision.confidence - 10) };
+    }
+  }
+
+  // Confluence scoring on top of the chart-led decision
   const directionVotes = strategies.filter(s => s.direction === best.direction).length;
   let finalConfidence = best.confidence;
   if (directionVotes >= 4) finalConfidence += 6;
   else if (directionVotes >= 3) finalConfidence += 3;
-  else if (directionVotes <= 1) finalConfidence -= 6;
+  else if (directionVotes <= 1) finalConfidence -= 8;
 
-  // HTF alignment (very important for accuracy)
+  // HTF alignment
   const htfAligned =
     (best.direction === "BUY" && htfTrend === "BULLISH") ||
     (best.direction === "SELL" && htfTrend === "BEARISH");
   const htfOpposed =
     (best.direction === "BUY" && htfTrend === "BEARISH") ||
     (best.direction === "SELL" && htfTrend === "BULLISH");
-  if (htfAligned) finalConfidence += 7;
-  else if (htfOpposed) finalConfidence -= 10;
+  if (htfAligned) finalConfidence += 6;
+  else if (htfOpposed) finalConfidence -= 8;
 
-  // AI vision alignment
-  if (vision && vision.bias !== "NEUTRAL") {
-    if (vision.bias === best.direction) {
-      finalConfidence += Math.round(Math.min(10, (vision.confidence - 60) / 4 + 4));
-    } else {
-      finalConfidence -= 8;
-    }
-    if (vision.risk_warnings && vision.risk_warnings.length > 0) finalConfidence -= 3;
+  // Vision quality boosts
+  if (vision && !vision._rate_limited) {
+    finalConfidence = Math.round((finalConfidence + vision.confidence) / 2) + 4;
+    if (vision.liquidity_swept) finalConfidence += 4;
+    if (vision.fvg_present) finalConfidence += 3;
+    if (vision.order_block_present) finalConfidence += 3;
+    if (vision.supply_demand_zone === "in-demand" && best.direction === "BUY") finalConfidence += 4;
+    if (vision.supply_demand_zone === "in-supply" && best.direction === "SELL") finalConfidence += 4;
+    if (vision.risk_warnings && vision.risk_warnings.length > 0) finalConfidence -= 4;
   }
 
-  // Penalize choppy markets
-  if (adx < 18) finalConfidence -= 5;
+  // Penalize choppy live markets
+  if (adx < 16) finalConfidence -= 6;
 
-  finalConfidence = Math.max(40, Math.min(97, finalConfidence));
+  finalConfidence = Math.max(50, Math.min(96, finalConfidence));
 
 
   const isBuy = best.direction === "BUY";

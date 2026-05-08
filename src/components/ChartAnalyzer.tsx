@@ -56,7 +56,14 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         confidence: result.confidence,
       });
     } catch (err: any) {
-      setError(err.message || "Analysis failed");
+      if (err?.name === "NoTradeError") {
+        const obs = err.details?.observations?.slice(0, 3).join(" • ") || "";
+        const warn = err.details?.warnings?.slice(0, 2).join(" • ") || "";
+        setError(`🚫 NO-TRADE — ${err.message}${obs ? `\nChart: ${obs}` : ""}${warn ? `\nReason: ${warn}` : ""}`);
+        toast.warning("No clean setup detected — better to skip than take a fake signal.");
+      } else {
+        setError(err.message || "Analysis failed");
+      }
     } finally {
       setAnalyzing(false);
     }
@@ -248,7 +255,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
       {error && (
         <motion.div className="terminal-card p-4 border-destructive/30" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <p className="font-mono text-sm text-destructive">{error}</p>
+          <p className="font-mono text-sm text-destructive whitespace-pre-line">{error}</p>
         </motion.div>
       )}
       {signal && <SignalDisplay signal={signal} />}
