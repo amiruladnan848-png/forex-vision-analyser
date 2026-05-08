@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
-import { useDailySignalUsage } from "@/hooks/useDailySignalUsage";
+import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
 
 // TradingView pairs available for binary 1-min trading (matches engine + brokers like Pocket Option, Quotex, IQ Option)
 const BINARY_PAIRS = [
@@ -24,7 +24,7 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
   const [loading, setLoading] = useState(false);
   const [signal, setSignal] = useState<BinarySignal | null>(null);
   const [countdown, setCountdown] = useState(0);
-  const { canAnalyze, recordUsage, count, remaining } = useDailySignalUsage();
+  const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
 
   // Live countdown for expiry
@@ -34,7 +34,7 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
     const tick = () => {
       const ms = end - Date.now();
       setCountdown(ms > 0 ? ms : 0);
-      if (ms > 0) tickRef.current = window.setTimeout(tick, 250);
+      if (ms > 0) tickRef.current = window.setTimeout(tick, 500);
     };
     tick();
     return () => {
@@ -44,7 +44,7 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
 
   const handleGenerate = async () => {
     if (!canAnalyze) {
-      toast.error("Daily limit reached (10 signals / 24h)");
+      toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
       return;
     }
     setLoading(true);
@@ -54,7 +54,6 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
       setSignal(s);
       await recordUsage({
         pair,
-        timeframe: "1min",
         direction: s.direction,
         confidence: s.confidence,
       });
@@ -83,7 +82,7 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
           </h3>
         </div>
         <span className="font-mono text-xs text-muted-foreground">
-          {remaining === Infinity ? "∞" : `${count}/10`}
+          {remaining === Infinity ? "∞" : `${count}/${BINARY_DAILY_LIMIT}`}
         </span>
       </div>
       <p className="font-mono text-xs text-muted-foreground mb-4">
