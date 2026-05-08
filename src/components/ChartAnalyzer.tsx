@@ -255,7 +255,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
       {error && (
         <motion.div className="terminal-card p-4 border-destructive/30" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <p className="font-mono text-sm text-destructive">{error}</p>
+          <p className="font-mono text-sm text-destructive whitespace-pre-line">{error}</p>
         </motion.div>
       )}
       {signal && <SignalDisplay signal={signal} />}
