@@ -684,8 +684,22 @@ interface ChartVision {
   confidence: number;
   trend: "BULLISH" | "BEARISH" | "SIDEWAYS";
   structure: string;
+  last_candle_action?: string;
+  fvg_present?: boolean;
+  order_block_present?: boolean;
+  liquidity_swept?: boolean;
+  supply_demand_zone?: string;
   key_observations: string[];
   risk_warnings?: string[];
+  no_trade?: boolean;
+  _rate_limited?: boolean;
+}
+
+export class NoTradeError extends Error {
+  constructor(message: string, public details: { observations: string[]; warnings: string[] }) {
+    super(message);
+    this.name = "NoTradeError";
+  }
 }
 async function chartVision(imageData: string, pair: string): Promise<ChartVision | null> {
   try {
