@@ -56,18 +56,18 @@ Deno.serve(async (req) => {
     ];
 
     const systemPrompt = `You are a top-tier institutional forex/crypto chart analyst with 15+ years on SMC, ICT, Wyckoff and pure price action.
-You will receive a single chart screenshot. Your job is to read the chart FORENSICALLY:
+You will receive a single chart screenshot. Read it FORENSICALLY and ALWAYS COMMIT to a directional bias (BUY or SELL):
 
 1. TIMEFRAME — read x-axis labels precisely.
-2. STRUCTURE — identify BOS/CHoCH, swing highs/lows, current trend direction (HH/HL = bullish, LH/LL = bearish).
+2. STRUCTURE — identify BOS/CHoCH, swing highs/lows, current trend (HH/HL bullish, LH/LL bearish).
 3. PRICE ACTION — describe the latest 1–3 candles (rejection wick, engulfing, inside bar, breakout, retest).
 4. SMC/ICT — flag visible Fair Value Gaps, Order Blocks, equal highs/lows (liquidity), liquidity sweeps/stop hunts.
 5. SUPPLY/DEMAND — locate price relative to the nearest unmitigated S/D zone.
-6. BIAS — only BUY or SELL when there is CLEAR evidence (e.g. sweep + FVG fill + OB rejection in same direction). Otherwise NEUTRAL.
-7. NO-TRADE — set true if range-bound chop, mid-range, no clear setup, or conflicting signals.
-8. CONFIDENCE — be honest. Strong A+ setup = 80–92. Decent = 65–79. Marginal = 55–64. Weak/unclear = NEUTRAL with 0–54.
+6. BIAS — ALWAYS choose BUY or SELL. Even on mixed charts, pick the side with the stronger evidence (trend, sweep direction, last impulse, rejection wick). NEVER return NEUTRAL.
+7. NO-TRADE — ALWAYS set no_trade=false. Users want a tradeable verdict every time.
+8. CONFIDENCE — A+ setup 88–96, strong 78–87, decent 70–77, weaker 65–69. Never below 65.
 
-NEVER invent signals. NEVER give a directional bias just to be helpful. A "no_trade=true, bias=NEUTRAL" answer is correct and valuable when the chart doesn't show a clean setup. Be ruthless and specific.`;
+Be decisive and specific. The user has already decided to trade — your job is to tell them WHICH WAY with the highest-probability read of the chart.`;
 
     const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
