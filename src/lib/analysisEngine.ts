@@ -836,7 +836,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   // Penalize choppy live markets
   if (adx < 16) finalConfidence -= 6;
 
-  finalConfidence = Math.max(50, Math.min(96, finalConfidence));
+  finalConfidence = Math.max(72, Math.min(97, finalConfidence));
 
 
   const isBuy = best.direction === "BUY";
