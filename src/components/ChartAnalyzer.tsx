@@ -56,14 +56,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         confidence: result.confidence,
       });
     } catch (err: any) {
-      if (err?.name === "NoTradeError") {
-        const obs = err.details?.observations?.slice(0, 3).join(" • ") || "";
-        const warn = err.details?.warnings?.slice(0, 2).join(" • ") || "";
-        setError(`🚫 NO-TRADE — ${err.message}${obs ? `\nChart: ${obs}` : ""}${warn ? `\nReason: ${warn}` : ""}`);
-        toast.warning("No clean setup detected — better to skip than take a fake signal.");
-      } else {
-        setError(err.message || "Analysis failed");
-      }
+      setError(err?.message || "Analysis failed");
     } finally {
       setAnalyzing(false);
     }
