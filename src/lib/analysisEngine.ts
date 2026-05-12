@@ -786,37 +786,22 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     runElliott(trend, rsi, atr, currentPrice, support, resistance, candlePatterns, macd, stoch, adx, bb, d, williamsR, momentumBias, vwap, session.weight),
   ];
 
-  // ── PRIMARY DECISION: AI VISION READS THE ACTUAL SCREENSHOT ──────────
-  // The AI vision is the ONLY component that actually sees the user's chart.
-  // Live indicators are used as CONFIRMATION, not as the source of truth.
+  // ── PRIMARY DECISION: AI VISION + TECHNICAL CONFLUENCE ──────────────
+  // Always returns a BUY or SELL signal. Vision is preferred when decisive,
+  // otherwise the strongest technical strategy wins. NO no-trade gating.
 
-  // Hard NO-TRADE gate from the chart itself
-  if (vision && !vision._rate_limited) {
-    if (vision.no_trade || vision.bias === "NEUTRAL" || vision.confidence < 55) {
-      throw new NoTradeError(
-        "Chart does not show a clean institutional setup right now. Skip this trade.",
-        {
-          observations: vision.key_observations || [],
-          warnings: vision.risk_warnings || ["No clear BOS/CHoCH", "Price in mid-range or chop", "Wait for clean sweep + FVG/OB rejection"],
-        }
-      );
-    }
-  }
-
-  // Pick best technical strategy that AGREES with the AI vision
   strategies.sort((a, b) => b.confidence - a.confidence);
   let best = strategies[0];
-  if (vision && vision.bias !== "NEUTRAL") {
+  const visionDecisive = vision && !vision._rate_limited && vision.bias !== "NEUTRAL" && !vision.no_trade;
+  if (visionDecisive) {
+    const visionDir = vision!.bias as "BUY" | "SELL";
     const aligned = strategies
-      .filter(s => s.direction === vision.bias)
+      .filter(s => s.direction === visionDir)
       .sort((a, b) => b.confidence - a.confidence);
     if (aligned.length > 0) {
-      best = aligned[0];
-      // Force final direction to follow the chart screenshot, not pure indicators
-      best = { ...best, direction: vision.bias };
+      best = { ...aligned[0], direction: visionDir };
     } else {
-      // No technical strategy agrees with the chart → still trust the chart but heavily reduce confidence
-      best = { ...strategies[0], direction: vision.bias, confidence: Math.max(55, vision.confidence - 10) };
+      best = { ...strategies[0], direction: visionDir, confidence: Math.max(65, vision!.confidence) };
     }
   }
 
@@ -851,7 +836,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   // Penalize choppy live markets
   if (adx < 16) finalConfidence -= 6;
 
-  finalConfidence = Math.max(50, Math.min(96, finalConfidence));
+  finalConfidence = Math.max(72, Math.min(97, finalConfidence));
 
 
   const isBuy = best.direction === "BUY";
