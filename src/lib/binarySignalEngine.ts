@@ -263,9 +263,9 @@ export async function generateBinarySignal(pair: string, apiKey: string): Promis
   const dir: "CALL" | "PUT" = bullScore >= bearScore ? "CALL" : "PUT";
   const winning = Math.max(bullScore, bearScore);
   const losing = Math.min(bullScore, bearScore);
-  let confidence = 58 + Math.round((winning - losing) * 1.3);
-  if (confidence < 55) confidence = 55;
-  if (confidence > 96) confidence = 96;
+  let confidence = 72 + Math.round((winning - losing) * 1.5);
+  if (confidence < 72) confidence = 72;
+  if (confidence > 97) confidence = 97;
 
   // Next 1-min candle close
   const now = new Date();
