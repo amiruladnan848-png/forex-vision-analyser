@@ -84,7 +84,7 @@ Be decisive and specific. The user has already decided to trade — your job is 
             content: [
               {
                 type: "text",
-                text: `Analyze this ${pair || "forex/crypto"} chart screenshot forensically and return your verdict via report_chart_analysis. If the chart does not show a clean institutional setup, return no_trade=true and bias=NEUTRAL — do not force a signal.`,
+                text: `Analyze this ${pair || "forex/crypto"} chart screenshot forensically and return your verdict via report_chart_analysis. ALWAYS commit to a BUY or SELL bias (never NEUTRAL) and ALWAYS set no_trade=false. Pick the higher-probability side based on structure, last impulse, sweep direction, and the most recent rejection.`,
               },
               { type: "image_url", image_url: { url: imageData } },
             ],
