@@ -794,16 +794,14 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   let best = strategies[0];
   const visionDecisive = vision && !vision._rate_limited && vision.bias !== "NEUTRAL" && !vision.no_trade;
   if (visionDecisive) {
+    const visionDir = vision!.bias as "BUY" | "SELL";
     const aligned = strategies
-      .filter(s => s.direction === vision.bias)
+      .filter(s => s.direction === visionDir)
       .sort((a, b) => b.confidence - a.confidence);
     if (aligned.length > 0) {
-      best = aligned[0];
-      // Force final direction to follow the chart screenshot, not pure indicators
-      best = { ...best, direction: vision.bias };
+      best = { ...aligned[0], direction: visionDir };
     } else {
-      // No technical strategy agrees with the chart → still trust the chart but heavily reduce confidence
-      best = { ...strategies[0], direction: vision.bias, confidence: Math.max(55, vision.confidence - 10) };
+      best = { ...strategies[0], direction: visionDir, confidence: Math.max(65, vision!.confidence) };
     }
   }
 
