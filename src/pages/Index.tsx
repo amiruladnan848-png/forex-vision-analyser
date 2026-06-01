@@ -11,7 +11,7 @@ import { Navigate } from "react-router-dom";
 import { Loader2, ShieldAlert } from "lucide-react";
 
 const Index = () => {
-  const { user, loading, isApproved, isAdmin, apiKey } = useAuth();
+  const { user, loading, isApproved, isAdmin } = useAuth();
 
   if (loading) {
     return (
@@ -63,36 +63,22 @@ const Index = () => {
               <MarketSessions />
             </motion.div>
 
-            {!apiKey ? (
-              <motion.div
-                className="terminal-card p-12 text-center"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <div className="font-display text-sm tracking-wider text-muted-foreground">
-                  ⚡ WAITING FOR ADMIN TO CONFIGURE API KEY
-                </div>
-              </motion.div>
-            ) : (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <ChartAnalyzer apiKey={apiKey} />
-              </motion.div>
-            )}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+            >
+              <ChartAnalyzer />
+            </motion.div>
 
-            {apiKey && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-              >
-                <BinarySignalPanel apiKey={apiKey} />
-              </motion.div>
-            )}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              <BinarySignalPanel />
+            </motion.div>
+
 
             <MoneyManagementRules />
           </>

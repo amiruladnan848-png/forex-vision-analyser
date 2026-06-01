@@ -11,6 +11,9 @@
 // Returns CALL/PUT verdict for the NEXT 1-min candle close, with confidence + expiry in user TZ.
 
 import { PAIRS_MAP, type OHLC } from "./analysisEngine";
+import { fetchCandles } from "./derivApi";
+import { detectVolatility, boostAccuracy } from "./signalShield";
+
 
 function ema(values: number[], period: number): number[] {
   if (!values.length) return [];
@@ -98,25 +101,10 @@ function sessionBoost(): { boost: number; label: string } {
   return { boost: 0, label: "Off-session" };
 }
 
-const cache = new Map<string, { candles: OHLC[]; ts: number }>();
-
-async function fetchMin1(symbol: string, apiKey: string): Promise<OHLC[]> {
-  const key = `${symbol}:1min`;
-  const c = cache.get(key);
-  if (c && Date.now() - c.ts < 25_000) return c.candles;
-  const res = await fetch(
-    `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1min&outputsize=120&apikey=${encodeURIComponent(apiKey)}&format=JSON`
-  );
-  const data = await res.json();
-  if (data.status === "error" || !data.values) {
-    throw new Error(data.message || "Market data unavailable. Market may be closed.");
-  }
-  const candles: OHLC[] = data.values.map((v: any) => ({
-    open: +v.open, high: +v.high, low: +v.low, close: +v.close, datetime: v.datetime,
-  }));
-  cache.set(key, { candles, ts: Date.now() });
-  return candles;
+async function fetchMin1(pair: string): Promise<OHLC[]> {
+  return fetchCandles(pair, "1min", 120);
 }
+
 
 export interface BinarySignal {
   pair: string;
@@ -130,12 +118,13 @@ export interface BinarySignal {
   caution?: string;
 }
 
-export async function generateBinarySignal(pair: string, apiKey: string): Promise<BinarySignal> {
+export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string): Promise<BinarySignal> {
   const info = PAIRS_MAP[pair];
   if (!info) throw new Error("Unknown pair");
 
-  const candles = await fetchMin1(info.symbol, apiKey);
+  const candles = await fetchMin1(pair);
   if (candles.length < 30) throw new Error("Not enough market data");
+
 
   // Multi-timeframe (single API call — all derived locally)
   const m5 = aggregate(candles, 5);
@@ -249,23 +238,37 @@ export async function generateBinarySignal(pair: string, apiKey: string): Promis
     else bearScore += sess.boost;
   }
 
-  // 12. Choppy / volatility filters
+  // 12. Volatility shield (Accuracy Drop Shelter)
+  const vol = detectVolatility(candles);
   let caution: string | undefined;
-  if (adx < 12) {
-    bullScore -= 8; bearScore -= 8;
-    caution = "Choppy market — trade smaller or skip";
-  }
-  // Avoid signals when 1m & 5m disagree strongly
+  if (adx < 12) caution = "Choppy market — using safe-mode filters";
+  else if (vol.level === "EXTREME") caution = "Extreme volatility — defensive mode";
+  else if (vol.level === "LOW") caution = "Very low volatility — small moves expected";
   if ((t5 > 0 && bearScore > bullScore) || (t5 < 0 && bullScore > bearScore)) {
-    caution = caution ?? "5m trend disagrees — lower probability";
+    caution = caution ?? "5m trend disagrees — engine using safer floor";
   }
 
   const dir: "CALL" | "PUT" = bullScore >= bearScore ? "CALL" : "PUT";
   const winning = Math.max(bullScore, bearScore);
   const losing = Math.min(bullScore, bearScore);
-  let confidence = 72 + Math.round((winning - losing) * 1.5);
-  if (confidence < 72) confidence = 72;
-  if (confidence > 97) confidence = 97;
+  const rawConf = 74 + Math.round((winning - losing) * 1.4);
+
+  const htfDir: "CALL" | "PUT" | "NEUTRAL" =
+    t5 > 0 && t15 > 0 ? "CALL" : t5 < 0 && t15 < 0 ? "PUT" : "NEUTRAL";
+  const boosted = boostAccuracy({
+    raw: rawConf,
+    vol,
+    htfAligned: htfDir !== "NEUTRAL" && htfDir === dir,
+    htfOpposed: htfDir !== "NEUTRAL" && htfDir !== dir,
+    visionAligned: false,
+    visionOpposed: false,
+    confluenceVotes: winning > losing ? 3 : 1,
+    totalStrategies: 3,
+    adx,
+    minFloor: 76,
+  });
+  const confidence = boosted.confidence;
+
 
   // Next 1-min candle close
   const now = new Date();
@@ -291,6 +294,8 @@ export async function generateBinarySignal(pair: string, apiKey: string): Promis
       `5m trend: ${t5 > 0 ? "▲" : "▼"} | 15m: ${t15 > 0 ? "▲" : "▼"}`,
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
+      `Volatility: ${vol.level}${boosted.shelterActive ? " • 🛡 Shelter" : ""}`,
+
     ],
     caution,
   };

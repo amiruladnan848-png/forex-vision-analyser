@@ -1,0 +1,149 @@
+// Deriv + Binance free public-data layer.
+// - Forex / metals → Deriv WebSocket (wss://ws.derivws.com, free public app_id=1089, no auth)
+// - Crypto pairs   → Binance public REST (no auth)
+// Replaces TwelveData entirely. Default setup, no API keys required.
+
+import type { OHLC } from "./analysisEngine";
+
+// ─── Pair → provider symbol maps ──────────────────────────────────────
+
+const DERIV_SYMBOLS: Record<string, string> = {
+  "EUR/USD": "frxEURUSD", "GBP/USD": "frxGBPUSD", "USD/JPY": "frxUSDJPY",
+  "AUD/USD": "frxAUDUSD", "USD/CAD": "frxUSDCAD", "NZD/USD": "frxNZDUSD",
+  "USD/CHF": "frxUSDCHF", "EUR/GBP": "frxEURGBP", "GBP/JPY": "frxGBPJPY",
+  "EUR/JPY": "frxEURJPY", "AUD/JPY": "frxAUDJPY", "EUR/AUD": "frxEURAUD",
+  "GBP/AUD": "frxGBPAUD", "GBP/CAD": "frxGBPCAD", "EUR/CAD": "frxEURCAD",
+  "EUR/NZD": "frxEURNZD", "GBP/NZD": "frxGBPNZD", "AUD/CAD": "frxAUDCAD",
+  "AUD/NZD": "frxAUDNZD", "CAD/JPY": "frxCADJPY", "CHF/JPY": "frxCHFJPY",
+  "NZD/JPY": "frxNZDJPY", "NZD/CAD": "frxNZDCAD",
+  "XAU/USD": "frxXAUUSD", "XAG/USD": "frxXAGUSD",
+};
+
+const BINANCE_SYMBOLS: Record<string, string> = {
+  "BTC/USD": "BTCUSDT", "ETH/USD": "ETHUSDT", "SOL/USD": "SOLUSDT",
+  "XRP/USD": "XRPUSDT", "BNB/USD": "BNBUSDT", "ADA/USD": "ADAUSDT",
+  "DOGE/USD": "DOGEUSDT", "DOT/USD": "DOTUSDT", "MATIC/USD": "MATICUSDT",
+  "AVAX/USD": "AVAXUSDT", "LINK/USD": "LINKUSDT", "LTC/USD": "LTCUSDT",
+};
+
+// Deriv granularity (sec). 1week is aggregated locally from 1day.
+const DERIV_GRAN: Record<string, number> = {
+  "1min": 60, "5min": 300, "15min": 900, "30min": 1800,
+  "1h": 3600, "4h": 14400, "1day": 86400, "1week": 86400,
+};
+const BINANCE_TF: Record<string, string> = {
+  "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
+  "1h": "1h", "4h": "4h", "1day": "1d", "1week": "1w",
+};
+
+// ─── Tiny cache to keep things smooth ─────────────────────────────────
+
+interface CacheEntry { candles: OHLC[]; ts: number }
+const cache = new Map<string, CacheEntry>();
+const CACHE_TTL: Record<string, number> = {
+  "1min": 25_000, "5min": 60_000, "15min": 4 * 60_000, "30min": 8 * 60_000,
+  "1h": 20 * 60_000, "4h": 60 * 60_000, "1day": 6 * 3600_000, "1week": 24 * 3600_000,
+};
+
+function aggregateWeekly(daily: OHLC[]): OHLC[] {
+  const chron = [...daily].reverse();
+  const out: OHLC[] = [];
+  for (let i = 0; i + 7 <= chron.length; i += 7) {
+    const s = chron.slice(i, i + 7);
+    out.push({
+      open: s[0].open, close: s[s.length - 1].close,
+      high: Math.max(...s.map(c => c.high)),
+      low: Math.min(...s.map(c => c.low)),
+      datetime: s[s.length - 1].datetime,
+    });
+  }
+  return out.reverse();
+}
+
+// ─── Deriv WebSocket (one-shot) ───────────────────────────────────────
+
+function derivCandles(symbol: string, granularity: number, count: number): Promise<OHLC[]> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch {} fn(); } };
+    const t = setTimeout(() => done(() => reject(new Error("Deriv timeout"))), 9000);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        ticks_history: symbol,
+        adjust_start_time: 1,
+        count,
+        end: "latest",
+        start: 1,
+        style: "candles",
+        granularity,
+      }));
+    };
+    ws.onmessage = (ev) => {
+      clearTimeout(t);
+      try {
+        const d = JSON.parse(ev.data);
+        if (d.error) return done(() => reject(new Error(d.error.message || "Deriv error")));
+        const raw: any[] = d.candles || [];
+        if (!raw.length) return done(() => reject(new Error("No data from Deriv (market closed?)")));
+        const candles: OHLC[] = raw.map(c => ({
+          open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+          datetime: new Date(c.epoch * 1000).toISOString(),
+        })).reverse(); // newest-first
+        done(() => resolve(candles));
+      } catch (e) {
+        done(() => reject(e as Error));
+      }
+    };
+    ws.onerror = () => { clearTimeout(t); done(() => reject(new Error("Deriv WS connection error"))); };
+  });
+}
+
+async function binanceCandles(symbol: string, tf: string, limit: number): Promise<OHLC[]> {
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${limit}`);
+  if (!res.ok) throw new Error(`Binance error ${res.status}`);
+  const arr: any[] = await res.json();
+  if (!Array.isArray(arr) || !arr.length) throw new Error("No crypto data");
+  return arr.map(k => ({
+    open: +k[1], high: +k[2], low: +k[3], close: +k[4],
+    datetime: new Date(k[0]).toISOString(),
+  })).reverse(); // newest-first
+}
+
+// ─── Public API ───────────────────────────────────────────────────────
+
+export async function fetchCandles(pair: string, interval: string = "1h", outputSize: number = 100): Promise<OHLC[]> {
+  const tf = interval in DERIV_GRAN ? interval : "1h";
+  const key = `${pair}:${tf}`;
+  const ttl = CACHE_TTL[tf] || 60_000;
+  const c = cache.get(key);
+  if (c && Date.now() - c.ts < ttl) return c.candles;
+
+  let candles: OHLC[];
+  try {
+    if (BINANCE_SYMBOLS[pair]) {
+      candles = await binanceCandles(BINANCE_SYMBOLS[pair], BINANCE_TF[tf], outputSize);
+    } else if (DERIV_SYMBOLS[pair]) {
+      const sym = DERIV_SYMBOLS[pair];
+      if (tf === "1week") {
+        const daily = await derivCandles(sym, 86400, Math.min(500, outputSize * 7));
+        candles = aggregateWeekly(daily);
+      } else {
+        candles = await derivCandles(sym, DERIV_GRAN[tf], outputSize);
+      }
+    } else {
+      throw new Error(`Pair ${pair} not supported by live data providers`);
+    }
+  } catch (err) {
+    // graceful fallback — try the other provider if applicable, then rethrow
+    if (BINANCE_SYMBOLS[pair] && DERIV_SYMBOLS[pair]) {
+      candles = await derivCandles(DERIV_SYMBOLS[pair], DERIV_GRAN[tf], outputSize);
+    } else {
+      throw err;
+    }
+  }
+
+  if (!candles.length) throw new Error("No candles returned. Market may be closed.");
+  cache.set(key, { candles, ts: Date.now() });
+  return candles;
+}

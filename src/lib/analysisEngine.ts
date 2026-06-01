@@ -1,5 +1,8 @@
 import { type Signal } from "@/components/SignalDisplay";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchCandles } from "./derivApi";
+import { detectVolatility, boostAccuracy } from "./signalShield";
+
 
 // ─── Forex + Crypto Pair Configuration ────────────────────────────────
 
@@ -57,59 +60,13 @@ export interface OHLC {
   datetime: string;
 }
 
-// ─── In-Memory Cache to Save API Credits ──────────────────────────────
+// ─── Market data: now powered by Deriv (forex) + Binance (crypto), no API key ──
 
-interface CacheEntry {
-  candles: OHLC[];
-  timestamp: number;
+async function fetchOHLC(_symbol: string, _apiKeyIgnored: string, interval: string = "1h", outputSize: number = 100): Promise<OHLC[]> {
+  // _symbol is a "EUR/USD"-style key. We route through the free provider layer.
+  return fetchCandles(_symbol, interval, outputSize);
 }
 
-const ohlcCache = new Map<string, CacheEntry>();
-
-// Cache TTL per timeframe (ms) — prevents redundant API calls
-const CACHE_TTL: Record<string, number> = {
-  "1min": 60_000,
-  "5min": 4 * 60_000,
-  "15min": 10 * 60_000,
-  "30min": 20 * 60_000,
-  "1h": 45 * 60_000,
-  "4h": 3 * 3600_000,
-  "1day": 12 * 3600_000,
-  "1week": 48 * 3600_000,
-};
-
-// ─── Single API Call: Fetch OHLC Time Series (1 credit, cached) ───────
-
-async function fetchOHLC(symbol: string, apiKey: string, interval: string = "1h", outputSize: number = 50): Promise<OHLC[]> {
-  const cacheKey = `${symbol}:${interval}`;
-  const cached = ohlcCache.get(cacheKey);
-  const ttl = CACHE_TTL[interval] || 60_000;
-
-  if (cached && Date.now() - cached.timestamp < ttl) {
-    return cached.candles;
-  }
-
-  const res = await fetch(
-    `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${outputSize}&apikey=${encodeURIComponent(apiKey)}&format=JSON`
-  );
-  const data = await res.json();
-  if (data.code === 401 || data.status === "error") {
-    throw new Error(data.message || "API error. Check your API key.");
-  }
-  if (!data.values || data.values.length === 0) {
-    throw new Error("No market data available. Market may be closed.");
-  }
-  const candles = data.values.map((v: any) => ({
-    open: parseFloat(v.open),
-    high: parseFloat(v.high),
-    low: parseFloat(v.low),
-    close: parseFloat(v.close),
-    datetime: v.datetime,
-  }));
-
-  ohlcCache.set(cacheKey, { candles, timestamp: Date.now() });
-  return candles;
-}
 
 // ─── Technical Indicators (ALL from real OHLC data) ───────────────────
 
@@ -672,10 +629,11 @@ function runElliott(
 
 export interface AnalysisInput {
   imageData: string;
-  apiKey: string;
+  apiKey?: string; // ignored — kept for backward compat. Live data is keyless (Deriv + Binance).
   pair: string;
   timeframe?: string; // "auto" or specific TF — defaults to auto (1h)
 }
+
 
 // Combined: detect timeframe + deep SMC/ICT vision in ONE cheap AI call
 interface ChartVision {
@@ -742,7 +700,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const htfTF = HTF_MAP[timeframe] || "4h";
 
   // Single market-data API call (1 credit). HTF derived locally — no extra credit.
-  const candles = await fetchOHLC(pairInfo.symbol, ctx.apiKey, timeframe, 100);
+  const candles = await fetchOHLC(ctx.pair, ctx.apiKey || "", timeframe, 120);
   const htfCandles: OHLC[] = [];
   for (let i = 0; i + 4 <= candles.length; i += 4) {
     const slice = candles.slice(i, i + 4);
@@ -807,10 +765,6 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
 
   // Confluence scoring on top of the chart-led decision
   const directionVotes = strategies.filter(s => s.direction === best.direction).length;
-  let finalConfidence = best.confidence;
-  if (directionVotes >= 4) finalConfidence += 6;
-  else if (directionVotes >= 3) finalConfidence += 3;
-  else if (directionVotes <= 1) finalConfidence -= 8;
 
   // HTF alignment
   const htfAligned =
@@ -819,24 +773,34 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   const htfOpposed =
     (best.direction === "BUY" && htfTrend === "BEARISH") ||
     (best.direction === "SELL" && htfTrend === "BULLISH");
-  if (htfAligned) finalConfidence += 6;
-  else if (htfOpposed) finalConfidence -= 8;
 
-  // Vision quality boosts
+  // Volatility shield + accuracy booster (always keeps confidence at high floor)
+  const vol = detectVolatility(candles);
+  const visionDir = vision && !vision._rate_limited ? vision.bias : "NEUTRAL";
+  const boosted = boostAccuracy({
+    raw: best.confidence,
+    vol,
+    htfAligned,
+    htfOpposed,
+    visionAligned: visionDir !== "NEUTRAL" && visionDir === best.direction,
+    visionOpposed: visionDir !== "NEUTRAL" && visionDir !== best.direction,
+    confluenceVotes: directionVotes,
+    totalStrategies: strategies.length,
+    adx,
+    minFloor: 75,
+  });
+  let finalConfidence = boosted.confidence;
+
+  // Extra fine boosts from vision quality cues
   if (vision && !vision._rate_limited) {
-    finalConfidence = Math.round((finalConfidence + vision.confidence) / 2) + 4;
-    if (vision.liquidity_swept) finalConfidence += 4;
-    if (vision.fvg_present) finalConfidence += 3;
-    if (vision.order_block_present) finalConfidence += 3;
-    if (vision.supply_demand_zone === "in-demand" && best.direction === "BUY") finalConfidence += 4;
-    if (vision.supply_demand_zone === "in-supply" && best.direction === "SELL") finalConfidence += 4;
-    if (vision.risk_warnings && vision.risk_warnings.length > 0) finalConfidence -= 4;
+    if (vision.liquidity_swept) finalConfidence += 2;
+    if (vision.fvg_present) finalConfidence += 1;
+    if (vision.order_block_present) finalConfidence += 1;
+    if (vision.supply_demand_zone === "in-demand" && best.direction === "BUY") finalConfidence += 2;
+    if (vision.supply_demand_zone === "in-supply" && best.direction === "SELL") finalConfidence += 2;
   }
+  finalConfidence = Math.max(75, Math.min(97, finalConfidence));
 
-  // Penalize choppy live markets
-  if (adx < 16) finalConfidence -= 6;
-
-  finalConfidence = Math.max(72, Math.min(97, finalConfidence));
 
 
   const isBuy = best.direction === "BUY";
@@ -880,14 +844,16 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
       `HTF(${htfTF}): ${htfTrend}`,
       vision ? `AI Vision: ${vision.bias} (${vision.confidence})` : "AI Vision: n/a",
     ],
-    analysis: `${best.analysis} | HTF ${htfTF} trend: ${htfTrend} (${htfAligned ? "ALIGNED ✓" : htfOpposed ? "OPPOSED ✗" : "neutral"}). ${vision ? `AI vision sees ${vision.bias} @ ${vision.confidence}% — ${vision.structure}. Key: ${(vision.key_observations || []).slice(0, 3).join("; ")}.` : ""} Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.`,
+    analysis: `${best.analysis} | HTF ${htfTF} trend: ${htfTrend} (${htfAligned ? "ALIGNED ✓" : htfOpposed ? "OPPOSED ✗" : "neutral"}). Volatility: ${vol.level} (${vol.note}). ${vision ? `AI vision sees ${vision.bias} @ ${vision.confidence}% — ${vision.structure}. Key: ${(vision.key_observations || []).slice(0, 3).join("; ")}.` : ""} Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.${boosted.shelterActive ? " 🛡 Accuracy-Drop Shelter active — defensive floor enforced." : ""}`,
     keyLevels: [
       `${support.toFixed(d)} Support`,
       `${fibs["50.0%"].toFixed(d)} Fib 50%`,
       `${resistance.toFixed(d)} Resistance`,
       `HTF ${htfTF}: ${htfTrend}`,
+      `Volatility: ${vol.level}`,
       `${session.name} (${session.volatility})`,
     ],
+
 
     trend,
     candles,
@@ -908,10 +874,8 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   };
 };
 
-export async function validateApiKey(apiKey: string): Promise<boolean> {
-  try {
-    const res = await fetch(`https://api.twelvedata.com/price?symbol=EUR/USD&apikey=${encodeURIComponent(apiKey)}`);
-    const data = await res.json();
-    return !!data.price;
-  } catch { return false; }
+export async function validateApiKey(_apiKey: string): Promise<boolean> {
+  // Live data is keyless (Deriv + Binance). Always OK.
+  return true;
 }
+

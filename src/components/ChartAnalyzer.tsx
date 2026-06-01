@@ -8,13 +8,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 interface ChartAnalyzerProps {
-  apiKey: string;
+  apiKey?: string;
 }
 
 const forexPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "forex").map(([k]) => k);
 const cryptoPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "crypto").map(([k]) => k);
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
+
   const { isAdmin } = useAuth();
   const { count, remaining, canAnalyze, recordUsage } = useDailySignalUsage();
   const [image, setImage] = useState<string | null>(null);
@@ -39,7 +40,7 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
   }, []);
 
   const handleAnalyze = async () => {
-    if (!image || !apiKey) return;
+    if (!image) return;
     if (!canAnalyze) {
       toast.error(`Daily limit reached: ${DAILY_SIGNAL_LIMIT} signals/24h. Try again later.`);
       return;
@@ -47,7 +48,8 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
     setAnalyzing(true);
     setError("");
     try {
-      const result = await analyzeChartImage({ imageData: image, apiKey, pair: selectedPair, timeframe });
+      const result = await analyzeChartImage({ imageData: image, pair: selectedPair, timeframe });
+
       setSignal(result);
       await recordUsage({
         pair: selectedPair,

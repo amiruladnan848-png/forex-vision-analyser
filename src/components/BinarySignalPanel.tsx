@@ -16,10 +16,10 @@ const BINARY_PAIRS = [
 ];
 
 interface Props {
-  apiKey: string;
+  apiKey?: string;
 }
 
-const BinarySignalPanel = ({ apiKey }: Props) => {
+const BinarySignalPanel = (_: Props) => {
   const [pair, setPair] = useState("EUR/USD");
   const [loading, setLoading] = useState(false);
   const [signal, setSignal] = useState<BinarySignal | null>(null);
@@ -50,7 +50,8 @@ const BinarySignalPanel = ({ apiKey }: Props) => {
     setLoading(true);
     setSignal(null);
     try {
-      const s = await generateBinarySignal(pair, apiKey);
+      const s = await generateBinarySignal(pair);
+
       setSignal(s);
       await recordUsage({
         pair,
