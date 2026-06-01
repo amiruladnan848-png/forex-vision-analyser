@@ -294,6 +294,8 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
       `5m trend: ${t5 > 0 ? "▲" : "▼"} | 15m: ${t15 > 0 ? "▲" : "▼"}`,
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
+      `Volatility: ${vol.level}${boosted.shelterActive ? " • 🛡 Shelter" : ""}`,
+
     ],
     caution,
   };
