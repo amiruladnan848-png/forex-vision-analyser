@@ -1,5 +1,8 @@
 import { type Signal } from "@/components/SignalDisplay";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchCandles } from "./derivApi";
+import { detectVolatility, boostAccuracy } from "./signalShield";
+
 
 // ─── Forex + Crypto Pair Configuration ────────────────────────────────
 
@@ -57,59 +60,13 @@ export interface OHLC {
   datetime: string;
 }
 
-// ─── In-Memory Cache to Save API Credits ──────────────────────────────
+// ─── Market data: now powered by Deriv (forex) + Binance (crypto), no API key ──
 
-interface CacheEntry {
-  candles: OHLC[];
-  timestamp: number;
+async function fetchOHLC(_symbol: string, _apiKeyIgnored: string, interval: string = "1h", outputSize: number = 100): Promise<OHLC[]> {
+  // _symbol is a "EUR/USD"-style key. We route through the free provider layer.
+  return fetchCandles(_symbol, interval, outputSize);
 }
 
-const ohlcCache = new Map<string, CacheEntry>();
-
-// Cache TTL per timeframe (ms) — prevents redundant API calls
-const CACHE_TTL: Record<string, number> = {
-  "1min": 60_000,
-  "5min": 4 * 60_000,
-  "15min": 10 * 60_000,
-  "30min": 20 * 60_000,
-  "1h": 45 * 60_000,
-  "4h": 3 * 3600_000,
-  "1day": 12 * 3600_000,
-  "1week": 48 * 3600_000,
-};
-
-// ─── Single API Call: Fetch OHLC Time Series (1 credit, cached) ───────
-
-async function fetchOHLC(symbol: string, apiKey: string, interval: string = "1h", outputSize: number = 50): Promise<OHLC[]> {
-  const cacheKey = `${symbol}:${interval}`;
-  const cached = ohlcCache.get(cacheKey);
-  const ttl = CACHE_TTL[interval] || 60_000;
-
-  if (cached && Date.now() - cached.timestamp < ttl) {
-    return cached.candles;
-  }
-
-  const res = await fetch(
-    `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=${outputSize}&apikey=${encodeURIComponent(apiKey)}&format=JSON`
-  );
-  const data = await res.json();
-  if (data.code === 401 || data.status === "error") {
-    throw new Error(data.message || "API error. Check your API key.");
-  }
-  if (!data.values || data.values.length === 0) {
-    throw new Error("No market data available. Market may be closed.");
-  }
-  const candles = data.values.map((v: any) => ({
-    open: parseFloat(v.open),
-    high: parseFloat(v.high),
-    low: parseFloat(v.low),
-    close: parseFloat(v.close),
-    datetime: v.datetime,
-  }));
-
-  ohlcCache.set(cacheKey, { candles, timestamp: Date.now() });
-  return candles;
-}
 
 // ─── Technical Indicators (ALL from real OHLC data) ───────────────────
 
