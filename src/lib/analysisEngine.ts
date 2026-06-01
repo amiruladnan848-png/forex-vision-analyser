@@ -629,10 +629,11 @@ function runElliott(
 
 export interface AnalysisInput {
   imageData: string;
-  apiKey: string;
+  apiKey?: string; // ignored — kept for backward compat. Live data is keyless (Deriv + Binance).
   pair: string;
   timeframe?: string; // "auto" or specific TF — defaults to auto (1h)
 }
+
 
 // Combined: detect timeframe + deep SMC/ICT vision in ONE cheap AI call
 interface ChartVision {
