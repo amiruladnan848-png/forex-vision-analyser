@@ -11,6 +11,9 @@
 // Returns CALL/PUT verdict for the NEXT 1-min candle close, with confidence + expiry in user TZ.
 
 import { PAIRS_MAP, type OHLC } from "./analysisEngine";
+import { fetchCandles } from "./derivApi";
+import { detectVolatility, boostAccuracy } from "./signalShield";
+
 
 function ema(values: number[], period: number): number[] {
   if (!values.length) return [];
@@ -98,25 +101,10 @@ function sessionBoost(): { boost: number; label: string } {
   return { boost: 0, label: "Off-session" };
 }
 
-const cache = new Map<string, { candles: OHLC[]; ts: number }>();
-
-async function fetchMin1(symbol: string, apiKey: string): Promise<OHLC[]> {
-  const key = `${symbol}:1min`;
-  const c = cache.get(key);
-  if (c && Date.now() - c.ts < 25_000) return c.candles;
-  const res = await fetch(
-    `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1min&outputsize=120&apikey=${encodeURIComponent(apiKey)}&format=JSON`
-  );
-  const data = await res.json();
-  if (data.status === "error" || !data.values) {
-    throw new Error(data.message || "Market data unavailable. Market may be closed.");
-  }
-  const candles: OHLC[] = data.values.map((v: any) => ({
-    open: +v.open, high: +v.high, low: +v.low, close: +v.close, datetime: v.datetime,
-  }));
-  cache.set(key, { candles, ts: Date.now() });
-  return candles;
+async function fetchMin1(pair: string): Promise<OHLC[]> {
+  return fetchCandles(pair, "1min", 120);
 }
+
 
 export interface BinarySignal {
   pair: string;
