@@ -844,14 +844,16 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
       `HTF(${htfTF}): ${htfTrend}`,
       vision ? `AI Vision: ${vision.bias} (${vision.confidence})` : "AI Vision: n/a",
     ],
-    analysis: `${best.analysis} | HTF ${htfTF} trend: ${htfTrend} (${htfAligned ? "ALIGNED ✓" : htfOpposed ? "OPPOSED ✗" : "neutral"}). ${vision ? `AI vision sees ${vision.bias} @ ${vision.confidence}% — ${vision.structure}. Key: ${(vision.key_observations || []).slice(0, 3).join("; ")}.` : ""} Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.`,
+    analysis: `${best.analysis} | HTF ${htfTF} trend: ${htfTrend} (${htfAligned ? "ALIGNED ✓" : htfOpposed ? "OPPOSED ✗" : "neutral"}). Volatility: ${vol.level} (${vol.note}). ${vision ? `AI vision sees ${vision.bias} @ ${vision.confidence}% — ${vision.structure}. Key: ${(vision.key_observations || []).slice(0, 3).join("; ")}.` : ""} Session: ${session.name} (${session.volatility}). ${directionVotes}/4 strategies agree on ${best.direction}.${boosted.shelterActive ? " 🛡 Accuracy-Drop Shelter active — defensive floor enforced." : ""}`,
     keyLevels: [
       `${support.toFixed(d)} Support`,
       `${fibs["50.0%"].toFixed(d)} Fib 50%`,
       `${resistance.toFixed(d)} Resistance`,
       `HTF ${htfTF}: ${htfTrend}`,
+      `Volatility: ${vol.level}`,
       `${session.name} (${session.volatility})`,
     ],
+
 
     trend,
     candles,
@@ -872,10 +874,8 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
   };
 };
 
-export async function validateApiKey(apiKey: string): Promise<boolean> {
-  try {
-    const res = await fetch(`https://api.twelvedata.com/price?symbol=EUR/USD&apikey=${encodeURIComponent(apiKey)}`);
-    const data = await res.json();
-    return !!data.price;
-  } catch { return false; }
+export async function validateApiKey(_apiKey: string): Promise<boolean> {
+  // Live data is keyless (Deriv + Binance). Always OK.
+  return true;
 }
+
