@@ -1,31 +1,34 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
+import { fetchCandles } from "@/lib/derivApi";
 import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
+import TradingViewMiniChart from "./TradingViewMiniChart";
 
-// TradingView pairs available for binary 1-min trading (matches engine + brokers like Pocket Option, Quotex, IQ Option)
 const BINARY_PAIRS = [
   "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "NZD/USD", "USD/CHF",
   "EUR/JPY", "GBP/JPY", "EUR/GBP", "AUD/JPY",
   "XAU/USD", "BTC/USD", "ETH/USD",
 ];
 
-interface Props {
-  apiKey?: string;
-}
+interface Props { apiKey?: string }
 
 const BinarySignalPanel = (_: Props) => {
   const [pair, setPair] = useState("EUR/USD");
   const [loading, setLoading] = useState(false);
   const [signal, setSignal] = useState<BinarySignal | null>(null);
   const [countdown, setCountdown] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  const [livePrice, setLivePrice] = useState<number | null>(null);
+  const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
+  const priceRef = useRef<number | null>(null);
 
   // Live countdown for expiry
   useEffect(() => {
@@ -34,13 +37,33 @@ const BinarySignalPanel = (_: Props) => {
     const tick = () => {
       const ms = end - Date.now();
       setCountdown(ms > 0 ? ms : 0);
-      if (ms > 0) tickRef.current = window.setTimeout(tick, 500);
+      if (ms > 0) tickRef.current = window.setTimeout(tick, 250);
     };
     tick();
-    return () => {
-      if (tickRef.current) window.clearTimeout(tickRef.current);
-    };
+    return () => { if (tickRef.current) window.clearTimeout(tickRef.current); };
   }, [signal]);
+
+  // Live price polling (every 3s) for selected pair
+  useEffect(() => {
+    let alive = true;
+    let timer: number | null = null;
+    const poll = async () => {
+      try {
+        const c = await fetchCandles(pair, "1min", 2);
+        if (!alive) return;
+        const p = c[0]?.close;
+        if (typeof p === "number") {
+          const prev = priceRef.current;
+          if (prev != null && p !== prev) setPriceDir(p > prev ? "up" : "down");
+          priceRef.current = p;
+          setLivePrice(p);
+        }
+      } catch { /* silent — keep last price */ }
+      if (alive) timer = window.setTimeout(poll, 3000);
+    };
+    poll();
+    return () => { alive = false; if (timer) window.clearTimeout(timer); };
+  }, [pair]);
 
   const handleGenerate = async () => {
     if (!canAnalyze) {
@@ -51,13 +74,8 @@ const BinarySignalPanel = (_: Props) => {
     setSignal(null);
     try {
       const s = await generateBinarySignal(pair);
-
       setSignal(s);
-      await recordUsage({
-        pair,
-        direction: s.direction,
-        confidence: s.confidence,
-      });
+      await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
       toast.success(`${s.direction} signal — ${s.confidence}% confidence`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to generate signal");
@@ -68,6 +86,7 @@ const BinarySignalPanel = (_: Props) => {
 
   const isCall = signal?.direction === "CALL";
   const secs = Math.ceil(countdown / 1000);
+  const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
   return (
     <motion.div
@@ -90,11 +109,9 @@ const BinarySignalPanel = (_: Props) => {
         Manual trigger only. Signal targets the next 1-minute candle close (binary expiry).
       </p>
 
-      <div className="grid sm:grid-cols-[1fr_auto] gap-3 mb-4">
+      <div className="grid sm:grid-cols-[1fr_auto] gap-3 mb-3">
         <Select value={pair} onValueChange={setPair} disabled={loading}>
-          <SelectTrigger className="font-mono">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="font-mono"><SelectValue /></SelectTrigger>
           <SelectContent>
             {BINARY_PAIRS.filter(p => PAIRS_MAP[p]).map(p => (
               <SelectItem key={p} value={p} className="font-mono">{p}</SelectItem>
@@ -107,12 +124,33 @@ const BinarySignalPanel = (_: Props) => {
           size="lg"
           className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90"
         >
-          {loading ? (
-            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>
-          ) : (
-            <><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>
-          )}
+          {loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>) : (<><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>)}
         </Button>
+      </div>
+
+      {/* Live price ticker */}
+      <div className="flex items-center justify-between mb-3 px-3 py-2 rounded bg-background/50 border border-border/40">
+        <div className="flex items-center gap-2">
+          <Activity className={`w-4 h-4 ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-primary"} animate-pulse`} />
+          <span className="font-mono text-xs text-muted-foreground">LIVE {pair}</span>
+        </div>
+        <span className={`font-display text-base font-bold transition-colors ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-foreground"}`}>
+          {livePrice != null ? livePrice.toFixed(decimals) : "…"}
+        </span>
+      </div>
+
+      {/* TradingView 1-min live chart */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-display text-[10px] tracking-widest text-muted-foreground">TRADINGVIEW • 1M LIVE</span>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="font-mono text-[10px] text-primary hover:text-accent flex items-center gap-1 transition-colors"
+          >
+            {expanded ? <><Minimize2 className="w-3 h-3" /> COLLAPSE</> : <><Maximize2 className="w-3 h-3" /> EXPAND</>}
+          </button>
+        </div>
+        <TradingViewMiniChart pair={pair} interval="1" height={expanded ? 620 : 360} />
       </div>
 
       <AnimatePresence mode="wait">
@@ -122,24 +160,12 @@ const BinarySignalPanel = (_: Props) => {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className={`rounded-lg border-2 p-5 ${
-              isCall
-                ? "border-buy/60 bg-buy/5"
-                : "border-sell/60 bg-sell/5"
-            }`}
-            style={{
-              boxShadow: isCall
-                ? "0 0 24px hsl(var(--buy) / 0.35)"
-                : "0 0 24px hsl(var(--sell) / 0.35)",
-            }}
+            className={`rounded-lg border-2 p-5 ${isCall ? "border-buy/60 bg-buy/5" : "border-sell/60 bg-sell/5"}`}
+            style={{ boxShadow: isCall ? "0 0 24px hsl(var(--buy) / 0.35)" : "0 0 24px hsl(var(--sell) / 0.35)" }}
           >
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
-                {isCall ? (
-                  <TrendingUp className="w-10 h-10 text-buy" />
-                ) : (
-                  <TrendingDown className="w-10 h-10 text-sell" />
-                )}
+                {isCall ? <TrendingUp className="w-10 h-10 text-buy" /> : <TrendingDown className="w-10 h-10 text-sell" />}
                 <div>
                   <div className={`font-display text-3xl font-black tracking-wider ${isCall ? "text-buy" : "text-sell"}`}>
                     {signal.direction}
@@ -150,11 +176,20 @@ const BinarySignalPanel = (_: Props) => {
                 </div>
               </div>
               <div className="text-right">
-                <div className="font-display text-2xl font-bold shimmer-text">
-                  {signal.confidence}%
-                </div>
+                <div className="font-display text-2xl font-bold shimmer-text">{signal.confidence}%</div>
                 <div className="font-mono text-[10px] text-muted-foreground">CONFIDENCE</div>
               </div>
+            </div>
+
+            {/* Live price inside signal card */}
+            <div className="flex items-center justify-between mb-3 p-3 rounded bg-background/60 border border-primary/20">
+              <div className="flex items-center gap-2">
+                <Activity className={`w-4 h-4 ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-primary"} animate-pulse`} />
+                <span className="font-mono text-[11px] text-muted-foreground">LIVE PRICE</span>
+              </div>
+              <span className={`font-display text-xl font-bold ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-foreground"}`}>
+                {livePrice != null ? livePrice.toFixed(decimals) : "…"}
+              </span>
             </div>
 
             <div className="flex items-center gap-2 mb-3 p-3 rounded bg-background/50">
@@ -180,15 +215,10 @@ const BinarySignalPanel = (_: Props) => {
 
             {signal.reasons.length > 0 && (
               <div className="mb-3">
-                <div className="font-display text-xs tracking-wider text-muted-foreground mb-2">
-                  CONFLUENCE REASONS
-                </div>
+                <div className="font-display text-xs tracking-wider text-muted-foreground mb-2">CONFLUENCE REASONS</div>
                 <div className="flex flex-wrap gap-1.5">
                   {signal.reasons.map((r, i) => (
-                    <span
-                      key={i}
-                      className="font-mono text-[10px] px-2 py-0.5 rounded border border-primary/40 bg-primary/5 text-foreground"
-                    >
+                    <span key={i} className="font-mono text-[10px] px-2 py-0.5 rounded border border-primary/40 bg-primary/5 text-foreground">
                       ✓ {r}
                     </span>
                   ))}
@@ -197,9 +227,7 @@ const BinarySignalPanel = (_: Props) => {
             )}
 
             <div>
-              <div className="font-display text-xs tracking-wider text-muted-foreground mb-2">
-                INDICATORS
-              </div>
+              <div className="font-display text-xs tracking-wider text-muted-foreground mb-2">INDICATORS</div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {signal.indicators.map((ind, i) => (
                   <div key={i} className="font-mono text-[10px] text-muted-foreground bg-background/40 px-2 py-1 rounded">
