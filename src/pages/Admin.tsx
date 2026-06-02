@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, Users, Key, ShieldCheck, Check, X, Plus, Trash2, LogOut, ArrowLeft, AlertTriangle } from "lucide-react";
+import { Lock, Users, ShieldCheck, LogOut, ArrowLeft, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -16,42 +16,22 @@ interface Profile {
   created_at: string;
 }
 
-interface ApiKeyRow {
-  id: string;
-  key_value: string;
-  label: string | null;
-  is_active: boolean;
-  created_at: string;
-}
-
 const Admin = () => {
-  const { user, isAdmin, signOut } = useAuth();
+  const { isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [pin, setPin] = useState("");
   const [pinError, setPinError] = useState(false);
-  const [tab, setTab] = useState<"users" | "apikeys">("users");
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
-  const [newKey, setNewKey] = useState("");
-  const [newLabel, setNewLabel] = useState("");
 
   const fetchProfiles = useCallback(async () => {
     const { data } = await supabase.from("profiles").select("*");
     if (data) setProfiles(data);
   }, []);
 
-  const fetchApiKeys = useCallback(async () => {
-    const { data } = await supabase.from("api_keys").select("*");
-    if (data) setApiKeys(data);
-  }, []);
-
   useEffect(() => {
-    if (pinUnlocked && isAdmin) {
-      fetchProfiles();
-      fetchApiKeys();
-    }
-  }, [pinUnlocked, isAdmin, fetchProfiles, fetchApiKeys]);
+    if (pinUnlocked && isAdmin) fetchProfiles();
+  }, [pinUnlocked, isAdmin, fetchProfiles]);
 
   const handlePinKey = (digit: string) => {
     setPinError(false);
@@ -59,12 +39,8 @@ const Admin = () => {
     if (next.length <= 6) {
       setPin(next);
       if (next.length === 6) {
-        if (next === ADMIN_PIN) {
-          setPinUnlocked(true);
-        } else {
-          setPinError(true);
-          setTimeout(() => { setPin(""); setPinError(false); }, 600);
-        }
+        if (next === ADMIN_PIN) setPinUnlocked(true);
+        else { setPinError(true); setTimeout(() => { setPin(""); setPinError(false); }, 600); }
       }
     }
   };
@@ -84,25 +60,6 @@ const Admin = () => {
     fetchProfiles();
   };
 
-  const addApiKey = async () => {
-    if (!newKey.trim()) return;
-    await supabase.from("api_keys").insert({ key_value: newKey.trim(), label: newLabel.trim() || "Default", created_by: user?.id });
-    setNewKey("");
-    setNewLabel("");
-    fetchApiKeys();
-  };
-
-  const deleteApiKey = async (id: string) => {
-    await supabase.from("api_keys").delete().eq("id", id);
-    fetchApiKeys();
-  };
-
-  const toggleApiKey = async (k: ApiKeyRow) => {
-    await supabase.from("api_keys").update({ is_active: !k.is_active }).eq("id", k.id);
-    fetchApiKeys();
-  };
-
-  // Pin Lock Screen
   if (!pinUnlocked) {
     const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
     return (
@@ -183,119 +140,51 @@ const Admin = () => {
       </motion.header>
 
       <main className="container mx-auto px-4 py-6 max-w-4xl space-y-6">
-        {/* Tabs */}
-        <div className="flex border border-border/50 rounded-lg overflow-hidden">
-          {([["users", "Users", Users], ["apikeys", "API Keys", Key]] as const).map(([val, label, Icon]) => (
-            <button
-              key={val}
-              onClick={() => setTab(val as any)}
-              className={`flex-1 py-3 font-display text-xs tracking-wider transition-all flex items-center justify-center gap-2 ${
-                tab === val ? "bg-primary text-primary-foreground" : "bg-card/50 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Icon className="w-4 h-4" /> {label}
-            </button>
-          ))}
+        <div className="terminal-card p-4 flex items-center gap-3 glow-border">
+          <Users className="w-5 h-5 text-primary" />
+          <div>
+            <p className="font-display text-sm tracking-wider">USER MANAGEMENT</p>
+            <p className="font-mono text-[11px] text-muted-foreground">
+              Live data is keyless (Deriv + Binance) — no API key setup required.
+            </p>
+          </div>
         </div>
 
         <AnimatePresence mode="wait">
-          {tab === "users" && (
-            <motion.div key="users" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-3">
-              {profiles.map(p => (
-                <motion.div key={p.id} className="terminal-card p-4 flex items-center justify-between gap-4" layout>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm text-foreground truncate">{p.email || "No email"}</p>
-                    <p className="font-mono text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <motion.button
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => toggleApproval(p)}
-                      className={`px-3 py-1.5 rounded text-[10px] font-display tracking-wider transition-colors ${
-                        p.is_approved ? "bg-accent text-accent-foreground" : "bg-destructive/20 text-destructive border border-destructive/30"
-                      }`}
-                    >
-                      {p.is_approved ? "APPROVED" : "PENDING"}
-                    </motion.button>
-                    <motion.button
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => toggleAdmin(p)}
-                      title="Toggle admin"
-                      className="px-3 py-1.5 rounded text-[10px] font-display tracking-wider bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
-                    >
-                      ADMIN
-                    </motion.button>
-                  </div>
-                </motion.div>
-              ))}
-              {profiles.length === 0 && (
-                <div className="terminal-card p-8 text-center">
-                  <p className="font-mono text-sm text-muted-foreground">No users registered yet.</p>
+          <motion.div key="users" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-3">
+            {profiles.map(p => (
+              <motion.div key={p.id} className="terminal-card p-4 flex items-center justify-between gap-4" layout>
+                <div className="flex-1 min-w-0">
+                  <p className="font-mono text-sm text-foreground truncate">{p.email || "No email"}</p>
+                  <p className="font-mono text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</p>
                 </div>
-              )}
-            </motion.div>
-          )}
-
-          {tab === "apikeys" && (
-            <motion.div key="apikeys" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-4">
-              <div className="terminal-card p-4 glow-border space-y-3">
-                <h3 className="font-display text-xs tracking-wider text-muted-foreground">ADD NEW API KEY</h3>
-                <div className="flex gap-2">
-                  <input
-                    value={newLabel}
-                    onChange={e => setNewLabel(e.target.value)}
-                    placeholder="Label..."
-                    className="w-32 bg-muted/50 border border-border/50 rounded-md px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors"
-                  />
-                  <input
-                    value={newKey}
-                    onChange={e => setNewKey(e.target.value)}
-                    placeholder="API Key value..."
-                    className="flex-1 bg-muted/50 border border-border/50 rounded-md px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/60 transition-colors"
-                  />
+                <div className="flex items-center gap-2">
                   <motion.button
                     whileTap={{ scale: 0.9 }}
-                    onClick={addApiKey}
-                    className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-display text-xs tracking-wider"
+                    onClick={() => toggleApproval(p)}
+                    className={`px-3 py-1.5 rounded text-[10px] font-display tracking-wider transition-colors ${
+                      p.is_approved ? "bg-accent text-accent-foreground" : "bg-destructive/20 text-destructive border border-destructive/30"
+                    }`}
                   >
-                    <Plus className="w-4 h-4" />
+                    {p.is_approved ? "APPROVED" : "PENDING"}
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => toggleAdmin(p)}
+                    title="Toggle admin"
+                    className="px-3 py-1.5 rounded text-[10px] font-display tracking-wider bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+                  >
+                    ADMIN
                   </motion.button>
                 </div>
+              </motion.div>
+            ))}
+            {profiles.length === 0 && (
+              <div className="terminal-card p-8 text-center">
+                <p className="font-mono text-sm text-muted-foreground">No users registered yet.</p>
               </div>
-
-              {apiKeys.map(k => (
-                <motion.div key={k.id} className="terminal-card p-4 flex items-center justify-between gap-3" layout>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-display text-xs tracking-wider">{k.label || "Default"}</p>
-                    <p className="font-mono text-[10px] text-muted-foreground truncate">{k.key_value.slice(0, 8)}...{k.key_value.slice(-4)}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <motion.button
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => toggleApiKey(k)}
-                      className={`px-3 py-1.5 rounded text-[10px] font-display tracking-wider transition-colors ${
-                        k.is_active ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {k.is_active ? "ACTIVE" : "DISABLED"}
-                    </motion.button>
-                    <motion.button
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => deleteApiKey(k.id)}
-                      className="p-1.5 rounded text-destructive hover:bg-destructive/10 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </motion.button>
-                  </div>
-                </motion.div>
-              ))}
-              {apiKeys.length === 0 && (
-                <div className="terminal-card p-8 text-center">
-                  <p className="font-mono text-sm text-muted-foreground">No API keys configured.</p>
-                </div>
-              )}
-            </motion.div>
-          )}
+            )}
+          </motion.div>
         </AnimatePresence>
       </main>
     </div>
