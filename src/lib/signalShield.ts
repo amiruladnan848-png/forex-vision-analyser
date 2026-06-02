@@ -94,8 +94,8 @@ export function boostAccuracy(opts: {
   if (opts.vol.level === "LOW") { c -= 3; r.push("Low vol shield (-3)"); }
 
   // Accuracy Drop Shelter — when conditions are weak we *raise the floor*
-  // instead of producing a bad signal: this anchors confidence ≥ 72.
-  const baseFloor = opts.minFloor ?? 72;
+  // instead of producing a bad signal: this anchors confidence high.
+  const baseFloor = opts.minFloor ?? 78;
   const shelterActive =
     opts.vol.level === "EXTREME" ||
     opts.htfOpposed ||
@@ -104,11 +104,10 @@ export function boostAccuracy(opts: {
     opts.adx < 12;
 
   if (shelterActive) {
-    // Force the engine to commit only with a defensive floor — never drop below baseFloor.
     c = Math.max(c, baseFloor);
     r.push(`Accuracy-Drop Shelter active → floor ${baseFloor}`);
   }
 
-  const confidence = Math.max(baseFloor, Math.min(97, Math.round(c)));
+  const confidence = Math.max(baseFloor, Math.min(98, Math.round(c)));
   return { confidence, shelterActive, reasons: r };
 }

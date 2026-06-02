@@ -787,7 +787,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     confluenceVotes: directionVotes,
     totalStrategies: strategies.length,
     adx,
-    minFloor: 75,
+    minFloor: 78,
   });
   let finalConfidence = boosted.confidence;
 
@@ -799,7 +799,7 @@ export const analyzeChartImage = async (ctx: AnalysisInput): Promise<Signal> => 
     if (vision.supply_demand_zone === "in-demand" && best.direction === "BUY") finalConfidence += 2;
     if (vision.supply_demand_zone === "in-supply" && best.direction === "SELL") finalConfidence += 2;
   }
-  finalConfidence = Math.max(75, Math.min(97, finalConfidence));
+  finalConfidence = Math.max(78, Math.min(98, finalConfidence));
 
 
 
