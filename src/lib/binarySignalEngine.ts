@@ -265,7 +265,7 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: 76,
+    minFloor: 78,
   });
   const confidence = boosted.confidence;
 
