@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
-import { fetchCandles } from "@/lib/derivApi";
+import { fetchLivePrice } from "@/lib/derivApi";
 import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
 import TradingViewMiniChart from "./TradingViewMiniChart";
 
@@ -26,6 +26,8 @@ const BinarySignalPanel = (_: Props) => {
   const [expanded, setExpanded] = useState(false);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [mtgUsed, setMtgUsed] = useState(false);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
@@ -49,9 +51,8 @@ const BinarySignalPanel = (_: Props) => {
     let timer: number | null = null;
     const poll = async () => {
       try {
-        const c = await fetchCandles(pair, "1min", 2);
+        const p = await fetchLivePrice(pair);
         if (!alive) return;
-        const p = c[0]?.close;
         if (typeof p === "number") {
           const prev = priceRef.current;
           if (prev != null && p !== prev) setPriceDir(p > prev ? "up" : "down");
@@ -59,13 +60,23 @@ const BinarySignalPanel = (_: Props) => {
           setLivePrice(p);
         }
       } catch { /* silent — keep last price */ }
-      if (alive) timer = window.setTimeout(poll, 3000);
+      if (alive) timer = window.setTimeout(poll, 2500);
     };
     poll();
     return () => { alive = false; if (timer) window.clearTimeout(timer); };
   }, [pair]);
 
-  const handleGenerate = async () => {
+  const speakBangla = (text: string) => {
+    if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "bn-BD";
+    utterance.rate = 0.92;
+    utterance.pitch = 1.02;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
       return;
@@ -73,9 +84,13 @@ const BinarySignalPanel = (_: Props) => {
     setLoading(true);
     setSignal(null);
     try {
-      const s = await generateBinarySignal(pair);
+      const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
+      setMtgUsed(mtgStep === 1);
+      setLivePrice(s.entryPrice);
+      priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
+      speakBangla(s.voiceScript);
       toast.success(`${s.direction} signal — ${s.confidence}% confidence`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to generate signal");
@@ -88,29 +103,44 @@ const BinarySignalPanel = (_: Props) => {
   const secs = Math.ceil(countdown / 1000);
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
+  const handleWin = () => {
+    setMtgUsed(false);
+    toast.success("Result saved locally — MTG reset");
+  };
+
+  const handleLossMtg = () => {
+    if (!signal || mtgUsed || loading) return;
+    handleGenerate(1, signal.direction);
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="terminal-card p-6 glow-border aurora-bg overflow-hidden relative"
     >
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3">
         <div className="flex items-center gap-2">
           <Radio className="w-5 h-5 text-primary animate-pulse" />
           <h3 className="font-display text-lg font-bold tracking-wider shimmer-text">
             BINARY 1-MIN SIGNAL
           </h3>
         </div>
-        <span className="font-mono text-xs text-muted-foreground">
-          {remaining === Infinity ? "∞" : `${count}/${BINARY_DAILY_LIMIT}`}
-        </span>
+        <button
+          type="button"
+          onClick={() => setVoiceEnabled(v => !v)}
+          className={`shrink-0 h-8 w-8 rounded-md border flex items-center justify-center transition-colors ${voiceEnabled ? "border-primary/50 bg-primary/10 text-primary" : "border-border/50 bg-muted/40 text-muted-foreground"}`}
+          title="Bangla voice alert"
+        >
+          <Volume2 className="w-4 h-4" />
+        </button>
       </div>
       <p className="font-mono text-xs text-muted-foreground mb-4">
-        Manual trigger only. Signal targets the next 1-minute candle close (binary expiry).
+        Manual trigger only. Signal targets the next 1-minute candle close. {remaining === Infinity ? "Admin unlimited" : `${remaining}/${BINARY_DAILY_LIMIT} signals left`}.
       </p>
 
       <div className="grid sm:grid-cols-[1fr_auto] gap-3 mb-3">
-        <Select value={pair} onValueChange={setPair} disabled={loading}>
+        <Select value={pair} onValueChange={(value) => { setPair(value); setSignal(null); setMtgUsed(false); }} disabled={loading}>
           <SelectTrigger className="font-mono"><SelectValue /></SelectTrigger>
           <SelectContent>
             {BINARY_PAIRS.filter(p => PAIRS_MAP[p]).map(p => (
@@ -119,7 +149,7 @@ const BinarySignalPanel = (_: Props) => {
           </SelectContent>
         </Select>
         <Button
-          onClick={handleGenerate}
+          onClick={() => handleGenerate()}
           disabled={loading || !canAnalyze}
           size="lg"
           className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90"
@@ -150,7 +180,7 @@ const BinarySignalPanel = (_: Props) => {
             {expanded ? <><Minimize2 className="w-3 h-3" /> COLLAPSE</> : <><Maximize2 className="w-3 h-3" /> EXPAND</>}
           </button>
         </div>
-        <TradingViewMiniChart pair={pair} interval="1" height={expanded ? 620 : 360} />
+        <TradingViewMiniChart pair={pair} interval="1" height={expanded ? 620 : 360} scanning={loading} />
       </div>
 
       <AnimatePresence mode="wait">
@@ -182,6 +212,21 @@ const BinarySignalPanel = (_: Props) => {
             </div>
 
             {/* Live price inside signal card */}
+            <div className="grid sm:grid-cols-3 gap-2 mb-3">
+              <div className="p-3 rounded bg-background/60 border border-primary/20">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">ENTRY PRICE</div>
+                <div className="font-display text-xl font-bold text-primary">{signal.entryPrice.toFixed(decimals)}</div>
+              </div>
+              <div className="p-3 rounded bg-background/60 border border-primary/20">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">VOLATILITY</div>
+                <div className={`font-display text-xl font-bold ${signal.safeMode ? "text-warning" : "text-accent"}`}>{signal.volatility}</div>
+              </div>
+              <div className="p-3 rounded bg-background/60 border border-primary/20">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">MTG STEP</div>
+                <div className="font-display text-xl font-bold">{signal.mtgStep}/1</div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between mb-3 p-3 rounded bg-background/60 border border-primary/20">
               <div className="flex items-center gap-2">
                 <Activity className={`w-4 h-4 ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-primary"} animate-pulse`} />
@@ -190,6 +235,25 @@ const BinarySignalPanel = (_: Props) => {
               <span className={`font-display text-xl font-bold ${priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-foreground"}`}>
                 {livePrice != null ? livePrice.toFixed(decimals) : "…"}
               </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={handleWin}
+                className="h-10 rounded-md border border-accent/40 bg-accent/10 text-accent font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-accent/15 transition-colors"
+              >
+                <CheckCircle2 className="w-4 h-4" /> WIN
+              </button>
+              <button
+                type="button"
+                onClick={handleLossMtg}
+                disabled={mtgUsed || loading || !canAnalyze}
+                className="h-10 rounded-md border border-warning/40 bg-warning/10 text-warning font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-warning/15 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : mtgUsed ? <XCircle className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
+                {mtgUsed ? "MTG USED" : "LOSS → 1 STEP MTG"}
+              </button>
             </div>
 
             <div className="flex items-center gap-2 mb-3 p-3 rounded bg-background/50">

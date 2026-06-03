@@ -18,9 +18,10 @@ interface Props {
   pair: string;
   height?: number;
   interval?: string; // "1" | "5" | "15" ...
+  scanning?: boolean;
 }
 
-const TradingViewMiniChart = memo(({ pair, height = 380, interval = "1" }: Props) => {
+const TradingViewMiniChart = memo(({ pair, height = 380, interval = "1", scanning = false }: Props) => {
   const ref = useRef<HTMLDivElement>(null);
   const symbol = TV_SYMBOL[pair] || "FX:EURUSD";
 
@@ -55,10 +56,17 @@ const TradingViewMiniChart = memo(({ pair, height = 380, interval = "1" }: Props
 
   return (
     <div
-      className="tradingview-widget-container rounded-lg overflow-hidden border border-primary/30 bg-background/40"
+      className="tradingview-widget-container rounded-lg overflow-hidden border border-primary/30 bg-background/40 relative"
       style={{ height, width: "100%" }}
     >
       <div ref={ref} className="tradingview-widget-container__widget" style={{ height: "100%", width: "100%" }} />
+      {scanning && (
+        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+          <div className="absolute inset-0 bg-primary/5 animate-pulse" />
+          <div className="chart-laser-sweep" />
+          <div className="chart-laser-glow" />
+        </div>
+      )}
     </div>
   );
 });

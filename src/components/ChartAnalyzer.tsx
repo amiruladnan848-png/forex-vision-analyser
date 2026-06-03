@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown, Gauge } from "lucide-react";
+import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown } from "lucide-react";
 import SignalDisplay, { type Signal } from "./SignalDisplay";
 import { analyzeChartImage, PAIRS_MAP } from "@/lib/analysisEngine";
 import { useDailySignalUsage, DAILY_SIGNAL_LIMIT } from "@/hooks/useDailySignalUsage";
-import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 interface ChartAnalyzerProps {
@@ -16,8 +15,7 @@ const cryptoPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "cryp
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
-  const { isAdmin } = useAuth();
-  const { count, remaining, canAnalyze, recordUsage } = useDailySignalUsage();
+  const { canAnalyze, recordUsage } = useDailySignalUsage();
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [signal, setSignal] = useState<Signal | null>(null);
@@ -68,40 +66,6 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
   return (
     <div className="space-y-4">
-      {/* Daily Usage Meter */}
-      <motion.div
-        className="terminal-card p-3 flex items-center gap-3"
-        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-      >
-        <Gauge className="w-4 h-4 text-primary" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-display text-[10px] tracking-widest text-muted-foreground">
-              DAILY SIGNAL USAGE
-            </span>
-            <span className="font-mono text-xs">
-              {isAdmin ? (
-                <span className="text-accent">UNLIMITED (ADMIN)</span>
-              ) : (
-                <span className={remaining === 0 ? "text-destructive" : "text-primary"}>
-                  {count}/{DAILY_SIGNAL_LIMIT} • {remaining} left
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-            <motion.div
-              className={`h-full rounded-full ${
-                isAdmin ? "bg-accent" : count >= DAILY_SIGNAL_LIMIT ? "bg-destructive" : "bg-primary"
-              }`}
-              initial={{ width: 0 }}
-              animate={{ width: isAdmin ? "100%" : `${Math.min(100, (count / DAILY_SIGNAL_LIMIT) * 100)}%` }}
-              transition={{ duration: 0.6 }}
-            />
-          </div>
-        </div>
-      </motion.div>
-
       {/* Market Type Tabs */}
       <motion.div className="flex gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
         {(["forex", "crypto"] as const).map(tab => (
@@ -199,7 +163,15 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
               >
                 <X className="w-4 h-4" />
               </motion.button>
-              <img src={image} alt="Chart" className="w-full rounded-md max-h-[400px] object-contain" />
+              <div className="relative rounded-md overflow-hidden border border-primary/20 bg-background/30">
+                <img src={image} alt="Chart" className="w-full max-h-[400px] object-contain" />
+                {analyzing && (
+                  <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute inset-0 bg-primary/5 animate-pulse" />
+                    <div className="chart-laser-sweep" />
+                  </div>
+                )}
+              </div>
               <div className="neon-line mt-3" />
               <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">

@@ -40,8 +40,9 @@ const BINANCE_TF: Record<string, string> = {
 
 interface CacheEntry { candles: OHLC[]; ts: number }
 const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<OHLC[]>>();
 const CACHE_TTL: Record<string, number> = {
-  "1min": 25_000, "5min": 60_000, "15min": 4 * 60_000, "30min": 8 * 60_000,
+  "1min": 2_500, "5min": 35_000, "15min": 4 * 60_000, "30min": 8 * 60_000,
   "1h": 20 * 60_000, "4h": 60 * 60_000, "1day": 6 * 3600_000, "1week": 24 * 3600_000,
 };
 
@@ -64,6 +65,10 @@ function aggregateWeekly(daily: OHLC[]): OHLC[] {
 
 function derivCandles(symbol: string, granularity: number, count: number): Promise<OHLC[]> {
   return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") {
+      reject(new Error("Live WebSocket data is not available in this browser"));
+      return;
+    }
     let settled = false;
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch {} fn(); } };
@@ -74,7 +79,6 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
         adjust_start_time: 1,
         count,
         end: "latest",
-        start: 1,
         style: "candles",
         granularity,
       }));
@@ -100,7 +104,7 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
 }
 
 async function binanceCandles(symbol: string, tf: string, limit: number): Promise<OHLC[]> {
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${limit}`);
+  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${limit}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Binance error ${res.status}`);
   const arr: any[] = await res.json();
   if (!Array.isArray(arr) || !arr.length) throw new Error("No crypto data");
@@ -114,36 +118,52 @@ async function binanceCandles(symbol: string, tf: string, limit: number): Promis
 
 export async function fetchCandles(pair: string, interval: string = "1h", outputSize: number = 100): Promise<OHLC[]> {
   const tf = interval in DERIV_GRAN ? interval : "1h";
-  const key = `${pair}:${tf}`;
+  const key = `${pair}:${tf}:${outputSize}`;
   const ttl = CACHE_TTL[tf] || 60_000;
   const c = cache.get(key);
   if (c && Date.now() - c.ts < ttl) return c.candles;
 
-  let candles: OHLC[];
-  try {
-    if (BINANCE_SYMBOLS[pair]) {
-      candles = await binanceCandles(BINANCE_SYMBOLS[pair], BINANCE_TF[tf], outputSize);
-    } else if (DERIV_SYMBOLS[pair]) {
-      const sym = DERIV_SYMBOLS[pair];
-      if (tf === "1week") {
-        const daily = await derivCandles(sym, 86400, Math.min(500, outputSize * 7));
-        candles = aggregateWeekly(daily);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const request = (async () => {
+    let candles: OHLC[];
+    try {
+      if (BINANCE_SYMBOLS[pair]) {
+        candles = await binanceCandles(BINANCE_SYMBOLS[pair], BINANCE_TF[tf], outputSize);
+      } else if (DERIV_SYMBOLS[pair]) {
+        const sym = DERIV_SYMBOLS[pair];
+        if (tf === "1week") {
+          const daily = await derivCandles(sym, 86400, Math.min(500, outputSize * 7));
+          candles = aggregateWeekly(daily);
+        } else {
+          candles = await derivCandles(sym, DERIV_GRAN[tf], outputSize);
+        }
       } else {
-        candles = await derivCandles(sym, DERIV_GRAN[tf], outputSize);
+        throw new Error(`Pair ${pair} not supported by live data providers`);
       }
-    } else {
-      throw new Error(`Pair ${pair} not supported by live data providers`);
-    }
-  } catch (err) {
-    // graceful fallback — try the other provider if applicable, then rethrow
-    if (BINANCE_SYMBOLS[pair] && DERIV_SYMBOLS[pair]) {
-      candles = await derivCandles(DERIV_SYMBOLS[pair], DERIV_GRAN[tf], outputSize);
-    } else {
+    } catch (err) {
+      const stale = cache.get(key);
+      if (stale?.candles.length) return stale.candles;
       throw err;
     }
-  }
 
-  if (!candles.length) throw new Error("No candles returned. Market may be closed.");
-  cache.set(key, { candles, ts: Date.now() });
-  return candles;
+    if (!candles.length) throw new Error("No candles returned. Market may be closed.");
+    cache.set(key, { candles, ts: Date.now() });
+    return candles;
+  })();
+
+  inflight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    inflight.delete(key);
+  }
+}
+
+export async function fetchLivePrice(pair: string): Promise<number> {
+  const candles = await fetchCandles(pair, "1min", 3);
+  const price = candles[0]?.close;
+  if (typeof price !== "number" || Number.isNaN(price)) throw new Error("Live price unavailable");
+  return price;
 }
