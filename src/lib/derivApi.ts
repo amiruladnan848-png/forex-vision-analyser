@@ -79,7 +79,6 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
         adjust_start_time: 1,
         count,
         end: "latest",
-        start: 1,
         style: "candles",
         granularity,
       }));
