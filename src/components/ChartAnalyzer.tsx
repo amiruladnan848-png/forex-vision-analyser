@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown, Gauge } from "lucide-react";
+import { Upload, Loader2, Crosshair, X, ImageIcon, ChevronDown } from "lucide-react";
 import SignalDisplay, { type Signal } from "./SignalDisplay";
 import { analyzeChartImage, PAIRS_MAP } from "@/lib/analysisEngine";
 import { useDailySignalUsage, DAILY_SIGNAL_LIMIT } from "@/hooks/useDailySignalUsage";
-import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
 interface ChartAnalyzerProps {
@@ -16,8 +15,7 @@ const cryptoPairs = Object.entries(PAIRS_MAP).filter(([, v]) => v.type === "cryp
 
 const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
-  const { isAdmin } = useAuth();
-  const { count, remaining, canAnalyze, recordUsage } = useDailySignalUsage();
+  const { canAnalyze, recordUsage } = useDailySignalUsage();
   const [image, setImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [signal, setSignal] = useState<Signal | null>(null);
