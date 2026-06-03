@@ -64,7 +64,7 @@ const TradingViewMiniChart = memo(({ pair, height = 380, interval = "1", scannin
         <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
           <div className="absolute inset-0 bg-primary/5 animate-pulse" />
           <div className="chart-laser-sweep" />
-          <div className="absolute inset-x-0 top-0 h-full bg-[linear-gradient(90deg,transparent,hsl(var(--primary)/0.10),transparent)] animate-[shimmer_1.4s_linear_infinite]" />
+          <div className="chart-laser-glow" />
         </div>
       )}
     </div>
