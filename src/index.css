@@ -214,6 +214,13 @@
   100% { transform: translateY(100%); }
 }
 
+@keyframes chart-laser-sweep {
+  0% { transform: translateY(-18%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(118%); opacity: 0; }
+}
+
 @keyframes flicker {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.97; }
@@ -247,6 +254,17 @@
     animation: shimmer 3.5s linear infinite;
   }
   .float-y { animation: float-y 4s ease-in-out infinite; }
+  .chart-laser-sweep {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 18%;
+    background:
+      linear-gradient(180deg, transparent 0%, hsl(var(--primary) / 0.08) 42%, hsl(var(--primary) / 0.95) 50%, hsl(var(--accent) / 0.22) 58%, transparent 100%);
+    box-shadow: 0 0 24px hsl(var(--primary) / 0.85), 0 0 60px hsl(var(--accent) / 0.35);
+    animation: chart-laser-sweep 1.65s ease-in-out infinite;
+  }
   .aurora-bg { position: relative; }
   .aurora-bg::before {
     content: '';
