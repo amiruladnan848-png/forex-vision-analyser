@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
-import { fetchCandles } from "@/lib/derivApi";
+import { fetchLivePrice } from "@/lib/derivApi";
 import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
 import TradingViewMiniChart from "./TradingViewMiniChart";
 
@@ -26,6 +26,8 @@ const BinarySignalPanel = (_: Props) => {
   const [expanded, setExpanded] = useState(false);
   const [livePrice, setLivePrice] = useState<number | null>(null);
   const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [mtgUsed, setMtgUsed] = useState(false);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
@@ -49,9 +51,8 @@ const BinarySignalPanel = (_: Props) => {
     let timer: number | null = null;
     const poll = async () => {
       try {
-        const c = await fetchCandles(pair, "1min", 2);
+        const p = await fetchLivePrice(pair);
         if (!alive) return;
-        const p = c[0]?.close;
         if (typeof p === "number") {
           const prev = priceRef.current;
           if (prev != null && p !== prev) setPriceDir(p > prev ? "up" : "down");
@@ -59,13 +60,23 @@ const BinarySignalPanel = (_: Props) => {
           setLivePrice(p);
         }
       } catch { /* silent — keep last price */ }
-      if (alive) timer = window.setTimeout(poll, 3000);
+      if (alive) timer = window.setTimeout(poll, 2500);
     };
     poll();
     return () => { alive = false; if (timer) window.clearTimeout(timer); };
   }, [pair]);
 
-  const handleGenerate = async () => {
+  const speakBangla = (text: string) => {
+    if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "bn-BD";
+    utterance.rate = 0.92;
+    utterance.pitch = 1.02;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
       return;
@@ -73,9 +84,13 @@ const BinarySignalPanel = (_: Props) => {
     setLoading(true);
     setSignal(null);
     try {
-      const s = await generateBinarySignal(pair);
+      const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
+      setMtgUsed(mtgStep === 1);
+      setLivePrice(s.entryPrice);
+      priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
+      speakBangla(s.voiceScript);
       toast.success(`${s.direction} signal — ${s.confidence}% confidence`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to generate signal");
@@ -87,6 +102,16 @@ const BinarySignalPanel = (_: Props) => {
   const isCall = signal?.direction === "CALL";
   const secs = Math.ceil(countdown / 1000);
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
+
+  const handleWin = () => {
+    setMtgUsed(false);
+    toast.success("Result saved locally — MTG reset");
+  };
+
+  const handleLossMtg = () => {
+    if (!signal || mtgUsed || loading) return;
+    handleGenerate(1, signal.direction);
+  };
 
   return (
     <motion.div
