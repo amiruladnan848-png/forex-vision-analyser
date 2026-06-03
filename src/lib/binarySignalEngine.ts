@@ -110,15 +110,28 @@ export interface BinarySignal {
   pair: string;
   direction: "CALL" | "PUT";
   confidence: number;
+  entryPrice: number;
   expiry: string;
   expiryISO: string;
+  generatedAtISO: string;
   countdownMs: number;
+  mtgStep: 0 | 1;
+  volatility: string;
+  safeMode: boolean;
   reasons: string[];
   indicators: string[];
   caution?: string;
+  voiceScript: string;
 }
 
-export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string): Promise<BinarySignal> {
+export interface BinarySignalOptions {
+  mtgStep?: 0 | 1;
+  previousLossDirection?: "CALL" | "PUT";
+}
+
+export async function generateBinarySignal(pair: string, optsOrKey?: BinarySignalOptions | string): Promise<BinarySignal> {
+  const opts: BinarySignalOptions = typeof optsOrKey === "object" && optsOrKey !== null ? optsOrKey : {};
+  const mtgStep: 0 | 1 = opts.mtgStep === 1 ? 1 : 0;
   const info = PAIRS_MAP[pair];
   if (!info) throw new Error("Unknown pair");
 
@@ -247,11 +260,17 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
   if ((t5 > 0 && bearScore > bullScore) || (t5 < 0 && bullScore > bearScore)) {
     caution = caution ?? "5m trend disagrees — engine using safer floor";
   }
+  if (mtgStep === 1) {
+    if (opts.previousLossDirection === "CALL") bullScore += 3;
+    if (opts.previousLossDirection === "PUT") bearScore += 3;
+    reasons.unshift("1-step MTG loss-recovery filter active");
+    caution = "MTG step 1/1 — use only after previous loss";
+  }
 
   const dir: "CALL" | "PUT" = bullScore >= bearScore ? "CALL" : "PUT";
   const winning = Math.max(bullScore, bearScore);
   const losing = Math.min(bullScore, bearScore);
-  const rawConf = 74 + Math.round((winning - losing) * 1.4);
+  const rawConf = 76 + Math.round((winning - losing) * 1.45) + (vol.safeMode ? -1 : 2) + (mtgStep === 1 ? 4 : 0);
 
   const htfDir: "CALL" | "PUT" | "NEUTRAL" =
     t5 > 0 && t15 > 0 ? "CALL" : t5 < 0 && t15 < 0 ? "PUT" : "NEUTRAL";
@@ -265,7 +284,7 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: 78,
+    minFloor: mtgStep === 1 ? 82 : 80,
   });
   const confidence = boosted.confidence;
 
@@ -280,10 +299,15 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
     pair,
     direction: dir,
     confidence,
+    entryPrice: c0.close,
     expiry: fmt(expiry),
     expiryISO: expiry.toISOString(),
+    generatedAtISO: now.toISOString(),
     countdownMs: expiry.getTime() - now.getTime(),
-    reasons: reasons.slice(0, 7),
+    mtgStep,
+    volatility: vol.level,
+    safeMode: vol.safeMode || boosted.shelterActive,
+    reasons: [...reasons, ...boosted.reasons.map(r => r.replace(/ \([+-]\d\)/, ""))].slice(0, 8),
     indicators: [
       `EMA5: ${e5.toFixed(info.decimals)}`,
       `EMA13: ${e13.toFixed(info.decimals)}`,
@@ -298,5 +322,6 @@ export async function generateBinarySignal(pair: string, _apiKeyIgnored?: string
 
     ],
     caution,
+    voiceScript: `${pair} বাইনারি সিগন্যাল। ${dir === "CALL" ? "কল" : "পুট"} এন্ট্রি। কনফিডেন্স ${confidence} শতাংশ। এক মিনিট এক্সপাইরি ${fmt(expiry)}। ${mtgStep === 1 ? "এটি এক ধাপ এম টি জি সিগন্যাল।" : ""}`,
   };
 }
