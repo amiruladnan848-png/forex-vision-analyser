@@ -265,6 +265,13 @@
     box-shadow: 0 0 24px hsl(var(--primary) / 0.85), 0 0 60px hsl(var(--accent) / 0.35);
     animation: chart-laser-sweep 1.65s ease-in-out infinite;
   }
+  .chart-laser-glow {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.10), transparent);
+    background-size: 220% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
   .aurora-bg { position: relative; }
   .aurora-bg::before {
     content: '';
