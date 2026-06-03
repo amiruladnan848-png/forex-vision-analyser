@@ -68,40 +68,6 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
 
   return (
     <div className="space-y-4">
-      {/* Daily Usage Meter */}
-      <motion.div
-        className="terminal-card p-3 flex items-center gap-3"
-        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-      >
-        <Gauge className="w-4 h-4 text-primary" />
-        <div className="flex-1">
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-display text-[10px] tracking-widest text-muted-foreground">
-              DAILY SIGNAL USAGE
-            </span>
-            <span className="font-mono text-xs">
-              {isAdmin ? (
-                <span className="text-accent">UNLIMITED (ADMIN)</span>
-              ) : (
-                <span className={remaining === 0 ? "text-destructive" : "text-primary"}>
-                  {count}/{DAILY_SIGNAL_LIMIT} • {remaining} left
-                </span>
-              )}
-            </span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-            <motion.div
-              className={`h-full rounded-full ${
-                isAdmin ? "bg-accent" : count >= DAILY_SIGNAL_LIMIT ? "bg-destructive" : "bg-primary"
-              }`}
-              initial={{ width: 0 }}
-              animate={{ width: isAdmin ? "100%" : `${Math.min(100, (count / DAILY_SIGNAL_LIMIT) * 100)}%` }}
-              transition={{ duration: 0.6 }}
-            />
-          </div>
-        </div>
-      </motion.div>
-
       {/* Market Type Tabs */}
       <motion.div className="flex gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
         {(["forex", "crypto"] as const).map(tab => (
