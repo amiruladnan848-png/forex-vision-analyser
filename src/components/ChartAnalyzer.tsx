@@ -199,7 +199,15 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
               >
                 <X className="w-4 h-4" />
               </motion.button>
-              <img src={image} alt="Chart" className="w-full rounded-md max-h-[400px] object-contain" />
+              <div className="relative rounded-md overflow-hidden border border-primary/20 bg-background/30">
+                <img src={image} alt="Chart" className="w-full max-h-[400px] object-contain" />
+                {analyzing && (
+                  <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <div className="absolute inset-0 bg-primary/5 animate-pulse" />
+                    <div className="chart-laser-sweep" />
+                  </div>
+                )}
+              </div>
               <div className="neon-line mt-3" />
               <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
