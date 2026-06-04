@@ -264,16 +264,24 @@ const BinarySignalPanel = (_: Props) => {
               </button>
             </div>
 
-            <div className="flex items-center gap-2 mb-3 p-3 rounded bg-background/50">
-              <Clock className="w-4 h-4 text-primary" />
-              <div className="flex-1">
-                <div className="font-mono text-xs text-muted-foreground">Expiry (your local time)</div>
-                <div className="font-display text-lg font-bold">{signal.expiry}</div>
+            <div className="grid sm:grid-cols-3 gap-2 mb-3">
+              <div className="p-3 rounded bg-background/60 border border-primary/30">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">⏱ ENTRY TIME</div>
+                <div className="font-display text-lg font-bold text-primary">{signal.entryTime}</div>
+                <div className={`font-mono text-[10px] mt-0.5 ${secs <= 10 ? "text-warning animate-pulse" : "text-muted-foreground"}`}>
+                  in {secs}s
+                </div>
               </div>
-              <div className="text-right">
-                <div className="font-mono text-xs text-muted-foreground">Enter within</div>
-                <div className={`font-display text-2xl font-bold ${secs <= 10 ? "text-warning animate-pulse" : "text-primary"}`}>
-                  {secs}s
+              <div className="p-3 rounded bg-background/60 border border-accent/30">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">⏳ EXPIRY TIME</div>
+                <div className="font-display text-lg font-bold text-accent">{signal.expiry}</div>
+                <div className="font-mono text-[10px] mt-0.5 text-muted-foreground">1 min expiry</div>
+              </div>
+              <div className="p-3 rounded bg-background/60 border border-border/50 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <div>
+                  <div className="font-mono text-[10px] text-muted-foreground">GENERATED</div>
+                  <div className="font-display text-sm font-bold">{signal.generatedAt}</div>
                 </div>
               </div>
             </div>
