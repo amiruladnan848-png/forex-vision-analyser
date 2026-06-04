@@ -68,12 +68,18 @@ const BinarySignalPanel = (_: Props) => {
 
   const speakBangla = (text: string) => {
     if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "bn-BD";
-    utterance.rate = 0.92;
-    utterance.pitch = 1.02;
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.cancel();
+      const voices = window.speechSynthesis.getVoices();
+      const bn = voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name));
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = bn?.lang || "bn-BD";
+      if (bn) utterance.voice = bn;
+      utterance.rate = 0.94;
+      utterance.pitch = 1.05;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch { /* ignore */ }
   };
 
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
@@ -84,6 +90,7 @@ const BinarySignalPanel = (_: Props) => {
     setLoading(true);
     setSignal(null);
     try {
+      if (mtgStep === 1) speakBangla("লস ডিটেক্টেড। এক ধাপ এম টি জি সিগন্যাল তৈরি হচ্ছে।");
       const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
       setMtgUsed(mtgStep === 1);
@@ -105,7 +112,8 @@ const BinarySignalPanel = (_: Props) => {
 
   const handleWin = () => {
     setMtgUsed(false);
-    toast.success("Result saved locally — MTG reset");
+    speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে। পরবর্তী সিগন্যালের জন্য প্রস্তুত থাকুন।");
+    toast.success("WIN recorded — MTG reset");
   };
 
   const handleLossMtg = () => {
