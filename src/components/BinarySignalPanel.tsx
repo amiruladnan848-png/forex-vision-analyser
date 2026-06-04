@@ -28,6 +28,8 @@ const BinarySignalPanel = (_: Props) => {
   const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mtgUsed, setMtgUsed] = useState(false);
+  const [resolution, setResolution] = useState<"PENDING" | "LIVE" | "WIN" | "LOSS" | null>(null);
+  const resolvedRef = useRef(false);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
