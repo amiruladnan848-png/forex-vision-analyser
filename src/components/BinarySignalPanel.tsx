@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -28,6 +28,8 @@ const BinarySignalPanel = (_: Props) => {
   const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mtgUsed, setMtgUsed] = useState(false);
+  const [resolution, setResolution] = useState<"PENDING" | "LIVE" | "WIN" | "LOSS" | null>(null);
+  const resolvedRef = useRef(false);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
@@ -94,6 +96,8 @@ const BinarySignalPanel = (_: Props) => {
       const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
       setMtgUsed(mtgStep === 1);
+      setResolution("PENDING");
+      resolvedRef.current = false;
       setLivePrice(s.entryPrice);
       priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
@@ -110,16 +114,60 @@ const BinarySignalPanel = (_: Props) => {
   const secs = Math.ceil(countdown / 1000);
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
-  const handleWin = () => {
-    setMtgUsed(false);
-    speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে। পরবর্তী সিগন্যালের জন্য প্রস্তুত থাকুন।");
-    toast.success("WIN recorded — MTG reset");
-  };
+  // ===== AUTO Win/Loss/MTG detection =====
+  // Mark LIVE when entry time hits, then resolve at expiry against live price.
+  useEffect(() => {
+    if (!signal) return;
+    const entryMs = new Date(signal.entryTimeISO).getTime();
+    const expiryMs = new Date(signal.expiryISO).getTime();
+    let liveT: number | null = null;
+    let resolveT: number | null = null;
 
-  const handleLossMtg = () => {
-    if (!signal || mtgUsed || loading) return;
-    handleGenerate(1, signal.direction);
-  };
+    const toLive = entryMs - Date.now();
+    if (toLive > 0) {
+      liveT = window.setTimeout(() => {
+        setResolution(r => (r === "PENDING" ? "LIVE" : r));
+        speakBangla("ট্রেড লাইভ। মূল্য পর্যবেক্ষণ চলছে।");
+      }, toLive);
+    } else {
+      setResolution(r => (r === "PENDING" ? "LIVE" : r));
+    }
+
+    const toResolve = expiryMs - Date.now() + 600; // small buffer for last tick
+    resolveT = window.setTimeout(async () => {
+      if (resolvedRef.current) return;
+      resolvedRef.current = true;
+      let closePx = priceRef.current ?? signal.entryPrice;
+      try {
+        const p = await fetchLivePrice(signal.pair);
+        if (typeof p === "number") closePx = p;
+      } catch { /* keep last */ }
+      const moved = closePx - signal.entryPrice;
+      const won = signal.direction === "CALL" ? moved > 0 : moved < 0;
+      if (won) {
+        setResolution("WIN");
+        setMtgUsed(false);
+        toast.success(`✅ WIN — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
+        speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে।");
+      } else {
+        setResolution("LOSS");
+        toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
+        if (!mtgUsed && canAnalyze) {
+          speakBangla("লস ডিটেক্টেড। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।");
+          setTimeout(() => handleGenerate(1, signal.direction), 1400);
+        } else {
+          speakBangla("লস ডিটেক্টেড। এম টি জি ইতিমধ্যে ব্যবহৃত হয়েছে।");
+        }
+      }
+    }, toResolve);
+
+    return () => {
+      if (liveT) window.clearTimeout(liveT);
+      if (resolveT) window.clearTimeout(resolveT);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal?.entryTimeISO]);
+
 
   return (
     <motion.div
@@ -245,24 +293,38 @@ const BinarySignalPanel = (_: Props) => {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <button
-                type="button"
-                onClick={handleWin}
-                className="h-10 rounded-md border border-accent/40 bg-accent/10 text-accent font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-accent/15 transition-colors"
-              >
-                <CheckCircle2 className="w-4 h-4" /> WIN
-              </button>
-              <button
-                type="button"
-                onClick={handleLossMtg}
-                disabled={mtgUsed || loading || !canAnalyze}
-                className="h-10 rounded-md border border-warning/40 bg-warning/10 text-warning font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-warning/15 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : mtgUsed ? <XCircle className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
-                {mtgUsed ? "MTG USED" : "LOSS → 1 STEP MTG"}
-              </button>
+            {/* AUTO Win/Loss/MTG status (no manual buttons) */}
+            <div className={`mb-3 p-3 rounded border-2 flex items-center justify-between gap-3 ${
+              resolution === "WIN" ? "border-buy/60 bg-buy/10" :
+              resolution === "LOSS" ? "border-sell/60 bg-sell/10" :
+              resolution === "LIVE" ? "border-primary/50 bg-primary/10 animate-pulse" :
+              "border-border/40 bg-background/40"
+            }`}>
+              <div className="flex items-center gap-2">
+                {resolution === "WIN" ? <CheckCircle2 className="w-5 h-5 text-buy" /> :
+                 resolution === "LOSS" ? <XCircle className="w-5 h-5 text-sell" /> :
+                 resolution === "LIVE" ? <Activity className="w-5 h-5 text-primary animate-pulse" /> :
+                 <Shield className="w-5 h-5 text-muted-foreground" />}
+                <div>
+                  <div className="font-display text-xs tracking-wider text-muted-foreground">AUTO TRADE STATUS</div>
+                  <div className={`font-display text-sm font-bold ${
+                    resolution === "WIN" ? "text-buy" :
+                    resolution === "LOSS" ? "text-sell" :
+                    resolution === "LIVE" ? "text-primary" : "text-foreground"
+                  }`}>
+                    {resolution === "WIN" ? "WIN DETECTED ✓" :
+                     resolution === "LOSS" ? (mtgUsed ? "LOSS — MTG COMPLETE" : "LOSS — AUTO MTG…") :
+                     resolution === "LIVE" ? "LIVE • MONITORING PRICE" :
+                     "AWAITING ENTRY"}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-[10px] text-muted-foreground">MTG STEP</div>
+                <div className="font-display text-lg font-bold">{signal.mtgStep}/1</div>
+              </div>
             </div>
+
 
             <div className="grid sm:grid-cols-3 gap-2 mb-3">
               <div className="p-3 rounded bg-background/60 border border-primary/30">
