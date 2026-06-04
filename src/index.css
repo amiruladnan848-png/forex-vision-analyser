@@ -120,9 +120,11 @@
   }
   body {
     @apply bg-background text-foreground font-body antialiased;
-    background-image: 
-      radial-gradient(ellipse at 20% 50%, hsl(175 100% 45% / 0.03) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 50%, hsl(145 80% 45% / 0.02) 0%, transparent 50%);
+    background-image:
+      radial-gradient(ellipse at 15% 20%, hsl(180 100% 55% / 0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 30%, hsl(285 95% 65% / 0.10) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 90%, hsl(145 90% 55% / 0.08) 0%, transparent 60%);
+    background-attachment: fixed;
     transition: background-color 0.3s ease, color 0.3s ease;
   }
   .light body,
