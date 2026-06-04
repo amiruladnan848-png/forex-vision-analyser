@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
