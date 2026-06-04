@@ -96,6 +96,8 @@ const BinarySignalPanel = (_: Props) => {
       const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
       setMtgUsed(mtgStep === 1);
+      setResolution("PENDING");
+      resolvedRef.current = false;
       setLivePrice(s.entryPrice);
       priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
@@ -112,16 +114,60 @@ const BinarySignalPanel = (_: Props) => {
   const secs = Math.ceil(countdown / 1000);
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
-  const handleWin = () => {
-    setMtgUsed(false);
-    speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে। পরবর্তী সিগন্যালের জন্য প্রস্তুত থাকুন।");
-    toast.success("WIN recorded — MTG reset");
-  };
+  // ===== AUTO Win/Loss/MTG detection =====
+  // Mark LIVE when entry time hits, then resolve at expiry against live price.
+  useEffect(() => {
+    if (!signal) return;
+    const entryMs = new Date(signal.entryTimeISO).getTime();
+    const expiryMs = new Date(signal.expiryISO).getTime();
+    let liveT: number | null = null;
+    let resolveT: number | null = null;
 
-  const handleLossMtg = () => {
-    if (!signal || mtgUsed || loading) return;
-    handleGenerate(1, signal.direction);
-  };
+    const toLive = entryMs - Date.now();
+    if (toLive > 0) {
+      liveT = window.setTimeout(() => {
+        setResolution(r => (r === "PENDING" ? "LIVE" : r));
+        speakBangla("ট্রেড লাইভ। মূল্য পর্যবেক্ষণ চলছে।");
+      }, toLive);
+    } else {
+      setResolution(r => (r === "PENDING" ? "LIVE" : r));
+    }
+
+    const toResolve = expiryMs - Date.now() + 600; // small buffer for last tick
+    resolveT = window.setTimeout(async () => {
+      if (resolvedRef.current) return;
+      resolvedRef.current = true;
+      let closePx = priceRef.current ?? signal.entryPrice;
+      try {
+        const p = await fetchLivePrice(signal.pair);
+        if (typeof p === "number") closePx = p;
+      } catch { /* keep last */ }
+      const moved = closePx - signal.entryPrice;
+      const won = signal.direction === "CALL" ? moved > 0 : moved < 0;
+      if (won) {
+        setResolution("WIN");
+        setMtgUsed(false);
+        toast.success(`✅ WIN — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
+        speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে।");
+      } else {
+        setResolution("LOSS");
+        toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
+        if (!mtgUsed && canAnalyze) {
+          speakBangla("লস ডিটেক্টেড। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।");
+          setTimeout(() => handleGenerate(1, signal.direction), 1400);
+        } else {
+          speakBangla("লস ডিটেক্টেড। এম টি জি ইতিমধ্যে ব্যবহৃত হয়েছে।");
+        }
+      }
+    }, toResolve);
+
+    return () => {
+      if (liveT) window.clearTimeout(liveT);
+      if (resolveT) window.clearTimeout(resolveT);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signal?.entryTimeISO]);
+
 
   return (
     <motion.div
