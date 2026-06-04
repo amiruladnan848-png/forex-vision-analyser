@@ -111,8 +111,11 @@ export interface BinarySignal {
   direction: "CALL" | "PUT";
   confidence: number;
   entryPrice: number;
+  entryTime: string;
+  entryTimeISO: string;
   expiry: string;
   expiryISO: string;
+  generatedAt: string;
   generatedAtISO: string;
   countdownMs: number;
   mtgStep: 0 | 1;
