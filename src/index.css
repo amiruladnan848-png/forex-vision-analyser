@@ -6,39 +6,39 @@
 
 @layer base {
   :root {
-    --background: 220 20% 4%;
-    --foreground: 180 100% 95%;
+    --background: 230 30% 5%;
+    --foreground: 180 100% 96%;
 
-    --card: 220 18% 8%;
-    --card-foreground: 180 100% 95%;
+    --card: 230 28% 9%;
+    --card-foreground: 180 100% 96%;
 
-    --popover: 220 18% 8%;
-    --popover-foreground: 180 100% 95%;
+    --popover: 230 28% 9%;
+    --popover-foreground: 180 100% 96%;
 
-    --primary: 175 100% 45%;
-    --primary-foreground: 220 20% 4%;
+    --primary: 180 100% 55%;
+    --primary-foreground: 230 30% 5%;
 
-    --secondary: 220 15% 14%;
-    --secondary-foreground: 180 40% 80%;
+    --secondary: 230 22% 15%;
+    --secondary-foreground: 180 40% 85%;
 
-    --muted: 220 15% 12%;
-    --muted-foreground: 220 10% 50%;
+    --muted: 230 22% 13%;
+    --muted-foreground: 220 12% 60%;
 
-    --accent: 145 80% 45%;
-    --accent-foreground: 220 20% 4%;
+    --accent: 285 95% 65%;
+    --accent-foreground: 230 30% 5%;
 
-    --destructive: 0 85% 55%;
+    --destructive: 0 90% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 180 60% 20%;
-    --input: 220 15% 14%;
-    --ring: 175 100% 45%;
+    --border: 180 70% 28%;
+    --input: 230 22% 15%;
+    --ring: 180 100% 55%;
 
     --radius: 0.5rem;
 
-    --glow-primary: 0 0 20px hsl(175 100% 45% / 0.4);
-    --glow-accent: 0 0 20px hsl(145 80% 45% / 0.4);
-    --glow-destructive: 0 0 20px hsl(0 85% 55% / 0.4);
+    --glow-primary: 0 0 28px hsl(180 100% 55% / 0.55);
+    --glow-accent: 0 0 28px hsl(285 95% 65% / 0.55);
+    --glow-destructive: 0 0 24px hsl(0 90% 60% / 0.5);
 
     --gradient-terminal: linear-gradient(135deg, hsl(220 20% 4%) 0%, hsl(220 25% 8%) 50%, hsl(220 20% 4%) 100%);
     --gradient-neon: linear-gradient(135deg, hsl(175 100% 45%) 0%, hsl(145 80% 45%) 100%);
