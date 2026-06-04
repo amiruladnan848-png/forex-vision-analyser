@@ -111,8 +111,11 @@ export interface BinarySignal {
   direction: "CALL" | "PUT";
   confidence: number;
   entryPrice: number;
+  entryTime: string;
+  entryTimeISO: string;
   expiry: string;
   expiryISO: string;
+  generatedAt: string;
   generatedAtISO: string;
   countdownMs: number;
   mtgStep: 0 | 1;
@@ -284,26 +287,45 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: mtgStep === 1 ? 82 : 80,
+    minFloor: mtgStep === 1 ? 84 : 82,
   });
   const confidence = boosted.confidence;
 
 
-  // Next 1-min candle close
+  // Entry on the NEXT 1-min candle open, expiry one minute later (cleanest binary timing)
   const now = new Date();
-  const expiry = new Date(Math.ceil((now.getTime() + 1) / 60_000) * 60_000);
+  const entryTime = new Date(Math.ceil((now.getTime() + 1) / 60_000) * 60_000);
+  const expiry = new Date(entryTime.getTime() + 60_000);
   const fmt = (d: Date) =>
     d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const banglaTime = (d: Date) => {
+    const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    return `${h} ঘটিকা ${m} মিনিট ${s} সেকেন্ড`;
+  };
+
+  const dirBangla = dir === "CALL" ? "কল আপ" : "পুট ডাউন";
+  const voiceScript = [
+    `${pair.replace("/", " ")} বাইনারি সিগন্যাল প্রস্তুত।`,
+    `${dirBangla} এন্ট্রি নিন।`,
+    `এন্ট্রি সময় ${banglaTime(entryTime)}।`,
+    `এক্সপায়ার সময় ${banglaTime(expiry)}।`,
+    `কনফিডেন্স ${confidence} শতাংশ।`,
+    mtgStep === 1 ? "এটি এক ধাপ এম টি জি রিকভারি সিগন্যাল।" : "",
+    vol.safeMode ? "সতর্ক থাকুন, সেফ মোড সক্রিয়।" : "",
+  ].filter(Boolean).join(" ");
 
   return {
     pair,
     direction: dir,
     confidence,
     entryPrice: c0.close,
+    entryTime: fmt(entryTime),
+    entryTimeISO: entryTime.toISOString(),
     expiry: fmt(expiry),
     expiryISO: expiry.toISOString(),
+    generatedAt: fmt(now),
     generatedAtISO: now.toISOString(),
-    countdownMs: expiry.getTime() - now.getTime(),
+    countdownMs: entryTime.getTime() - now.getTime(),
     mtgStep,
     volatility: vol.level,
     safeMode: vol.safeMode || boosted.shelterActive,
@@ -319,9 +341,8 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
       `Volatility: ${vol.level}${boosted.shelterActive ? " • 🛡 Shelter" : ""}`,
-
     ],
     caution,
-    voiceScript: `${pair} বাইনারি সিগন্যাল। ${dir === "CALL" ? "কল" : "পুট"} এন্ট্রি। কনফিডেন্স ${confidence} শতাংশ। এক মিনিট এক্সপাইরি ${fmt(expiry)}। ${mtgStep === 1 ? "এটি এক ধাপ এম টি জি সিগন্যাল।" : ""}`,
+    voiceScript,
   };
 }

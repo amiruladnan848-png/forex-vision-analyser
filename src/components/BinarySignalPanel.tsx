@@ -32,14 +32,14 @@ const BinarySignalPanel = (_: Props) => {
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
 
-  // Live countdown for expiry
+  // Live countdown until entry time (when to enter the trade)
   useEffect(() => {
     if (!signal) return;
-    const end = new Date(signal.expiryISO).getTime();
+    const end = new Date(signal.entryTimeISO).getTime();
     const tick = () => {
       const ms = end - Date.now();
       setCountdown(ms > 0 ? ms : 0);
-      if (ms > 0) tickRef.current = window.setTimeout(tick, 250);
+      if (ms > -60_000) tickRef.current = window.setTimeout(tick, 250);
     };
     tick();
     return () => { if (tickRef.current) window.clearTimeout(tickRef.current); };
@@ -68,12 +68,18 @@ const BinarySignalPanel = (_: Props) => {
 
   const speakBangla = (text: string) => {
     if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "bn-BD";
-    utterance.rate = 0.92;
-    utterance.pitch = 1.02;
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.cancel();
+      const voices = window.speechSynthesis.getVoices();
+      const bn = voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name));
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = bn?.lang || "bn-BD";
+      if (bn) utterance.voice = bn;
+      utterance.rate = 0.94;
+      utterance.pitch = 1.05;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch { /* ignore */ }
   };
 
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
@@ -84,6 +90,7 @@ const BinarySignalPanel = (_: Props) => {
     setLoading(true);
     setSignal(null);
     try {
+      if (mtgStep === 1) speakBangla("লস ডিটেক্টেড। এক ধাপ এম টি জি সিগন্যাল তৈরি হচ্ছে।");
       const s = await generateBinarySignal(pair, { mtgStep, previousLossDirection });
       setSignal(s);
       setMtgUsed(mtgStep === 1);
@@ -105,7 +112,8 @@ const BinarySignalPanel = (_: Props) => {
 
   const handleWin = () => {
     setMtgUsed(false);
-    toast.success("Result saved locally — MTG reset");
+    speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে। পরবর্তী সিগন্যালের জন্য প্রস্তুত থাকুন।");
+    toast.success("WIN recorded — MTG reset");
   };
 
   const handleLossMtg = () => {
@@ -256,16 +264,24 @@ const BinarySignalPanel = (_: Props) => {
               </button>
             </div>
 
-            <div className="flex items-center gap-2 mb-3 p-3 rounded bg-background/50">
-              <Clock className="w-4 h-4 text-primary" />
-              <div className="flex-1">
-                <div className="font-mono text-xs text-muted-foreground">Expiry (your local time)</div>
-                <div className="font-display text-lg font-bold">{signal.expiry}</div>
+            <div className="grid sm:grid-cols-3 gap-2 mb-3">
+              <div className="p-3 rounded bg-background/60 border border-primary/30">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">⏱ ENTRY TIME</div>
+                <div className="font-display text-lg font-bold text-primary">{signal.entryTime}</div>
+                <div className={`font-mono text-[10px] mt-0.5 ${secs <= 10 ? "text-warning animate-pulse" : "text-muted-foreground"}`}>
+                  in {secs}s
+                </div>
               </div>
-              <div className="text-right">
-                <div className="font-mono text-xs text-muted-foreground">Enter within</div>
-                <div className={`font-display text-2xl font-bold ${secs <= 10 ? "text-warning animate-pulse" : "text-primary"}`}>
-                  {secs}s
+              <div className="p-3 rounded bg-background/60 border border-accent/30">
+                <div className="font-mono text-[10px] text-muted-foreground mb-1">⏳ EXPIRY TIME</div>
+                <div className="font-display text-lg font-bold text-accent">{signal.expiry}</div>
+                <div className="font-mono text-[10px] mt-0.5 text-muted-foreground">1 min expiry</div>
+              </div>
+              <div className="p-3 rounded bg-background/60 border border-border/50 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <div>
+                  <div className="font-mono text-[10px] text-muted-foreground">GENERATED</div>
+                  <div className="font-display text-sm font-bold">{signal.generatedAt}</div>
                 </div>
               </div>
             </div>
