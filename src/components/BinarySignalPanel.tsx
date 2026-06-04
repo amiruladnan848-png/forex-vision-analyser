@@ -32,14 +32,14 @@ const BinarySignalPanel = (_: Props) => {
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
 
-  // Live countdown for expiry
+  // Live countdown until entry time (when to enter the trade)
   useEffect(() => {
     if (!signal) return;
-    const end = new Date(signal.expiryISO).getTime();
+    const end = new Date(signal.entryTimeISO).getTime();
     const tick = () => {
       const ms = end - Date.now();
       setCountdown(ms > 0 ? ms : 0);
-      if (ms > 0) tickRef.current = window.setTimeout(tick, 250);
+      if (ms > -60_000) tickRef.current = window.setTimeout(tick, 250);
     };
     tick();
     return () => { if (tickRef.current) window.clearTimeout(tickRef.current); };
