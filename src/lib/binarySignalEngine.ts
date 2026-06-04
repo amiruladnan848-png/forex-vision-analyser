@@ -303,15 +303,29 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     return `${h} ঘটিকা ${m} মিনিট ${s} সেকেন্ড`;
   };
 
+  const dirBangla = dir === "CALL" ? "কল আপ" : "পুট ডাউন";
+  const voiceScript = [
+    `${pair.replace("/", " ")} বাইনারি সিগন্যাল প্রস্তুত।`,
+    `${dirBangla} এন্ট্রি নিন।`,
+    `এন্ট্রি সময় ${banglaTime(entryTime)}।`,
+    `এক্সপায়ার সময় ${banglaTime(expiry)}।`,
+    `কনফিডেন্স ${confidence} শতাংশ।`,
+    mtgStep === 1 ? "এটি এক ধাপ এম টি জি রিকভারি সিগন্যাল।" : "",
+    vol.safeMode ? "সতর্ক থাকুন, সেফ মোড সক্রিয়।" : "",
+  ].filter(Boolean).join(" ");
+
   return {
     pair,
     direction: dir,
     confidence,
     entryPrice: c0.close,
+    entryTime: fmt(entryTime),
+    entryTimeISO: entryTime.toISOString(),
     expiry: fmt(expiry),
     expiryISO: expiry.toISOString(),
+    generatedAt: fmt(now),
     generatedAtISO: now.toISOString(),
-    countdownMs: expiry.getTime() - now.getTime(),
+    countdownMs: entryTime.getTime() - now.getTime(),
     mtgStep,
     volatility: vol.level,
     safeMode: vol.safeMode || boosted.shelterActive,
@@ -327,9 +341,8 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
       `Volatility: ${vol.level}${boosted.shelterActive ? " • 🛡 Shelter" : ""}`,
-
     ],
     caution,
-    voiceScript: `${pair} বাইনারি সিগন্যাল। ${dir === "CALL" ? "কল" : "পুট"} এন্ট্রি। কনফিডেন্স ${confidence} শতাংশ। এক মিনিট এক্সপাইরি ${fmt(expiry)}। ${mtgStep === 1 ? "এটি এক ধাপ এম টি জি সিগন্যাল।" : ""}`,
+    voiceScript,
   };
 }
