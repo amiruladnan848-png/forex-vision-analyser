@@ -289,11 +289,16 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   const confidence = boosted.confidence;
 
 
-  // Next 1-min candle close
+  // Entry on the NEXT 1-min candle open, expiry one minute later (cleanest binary timing)
   const now = new Date();
-  const expiry = new Date(Math.ceil((now.getTime() + 1) / 60_000) * 60_000);
+  const entryTime = new Date(Math.ceil((now.getTime() + 1) / 60_000) * 60_000);
+  const expiry = new Date(entryTime.getTime() + 60_000);
   const fmt = (d: Date) =>
     d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const banglaTime = (d: Date) => {
+    const h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    return `${h} ঘটিকা ${m} মিনিট ${s} সেকেন্ড`;
+  };
 
   return {
     pair,
