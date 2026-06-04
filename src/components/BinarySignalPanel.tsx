@@ -293,24 +293,38 @@ const BinarySignalPanel = (_: Props) => {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <button
-                type="button"
-                onClick={handleWin}
-                className="h-10 rounded-md border border-accent/40 bg-accent/10 text-accent font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-accent/15 transition-colors"
-              >
-                <CheckCircle2 className="w-4 h-4" /> WIN
-              </button>
-              <button
-                type="button"
-                onClick={handleLossMtg}
-                disabled={mtgUsed || loading || !canAnalyze}
-                className="h-10 rounded-md border border-warning/40 bg-warning/10 text-warning font-display text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-warning/15 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : mtgUsed ? <XCircle className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
-                {mtgUsed ? "MTG USED" : "LOSS → 1 STEP MTG"}
-              </button>
+            {/* AUTO Win/Loss/MTG status (no manual buttons) */}
+            <div className={`mb-3 p-3 rounded border-2 flex items-center justify-between gap-3 ${
+              resolution === "WIN" ? "border-buy/60 bg-buy/10" :
+              resolution === "LOSS" ? "border-sell/60 bg-sell/10" :
+              resolution === "LIVE" ? "border-primary/50 bg-primary/10 animate-pulse" :
+              "border-border/40 bg-background/40"
+            }`}>
+              <div className="flex items-center gap-2">
+                {resolution === "WIN" ? <CheckCircle2 className="w-5 h-5 text-buy" /> :
+                 resolution === "LOSS" ? <XCircle className="w-5 h-5 text-sell" /> :
+                 resolution === "LIVE" ? <Activity className="w-5 h-5 text-primary animate-pulse" /> :
+                 <Shield className="w-5 h-5 text-muted-foreground" />}
+                <div>
+                  <div className="font-display text-xs tracking-wider text-muted-foreground">AUTO TRADE STATUS</div>
+                  <div className={`font-display text-sm font-bold ${
+                    resolution === "WIN" ? "text-buy" :
+                    resolution === "LOSS" ? "text-sell" :
+                    resolution === "LIVE" ? "text-primary" : "text-foreground"
+                  }`}>
+                    {resolution === "WIN" ? "WIN DETECTED ✓" :
+                     resolution === "LOSS" ? (mtgUsed ? "LOSS — MTG COMPLETE" : "LOSS — AUTO MTG…") :
+                     resolution === "LIVE" ? "LIVE • MONITORING PRICE" :
+                     "AWAITING ENTRY"}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="font-mono text-[10px] text-muted-foreground">MTG STEP</div>
+                <div className="font-display text-lg font-bold">{signal.mtgStep}/1</div>
+              </div>
             </div>
+
 
             <div className="grid sm:grid-cols-3 gap-2 mb-3">
               <div className="p-3 rounded bg-background/60 border border-primary/30">
