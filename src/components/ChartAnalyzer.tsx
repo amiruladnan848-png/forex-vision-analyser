@@ -55,8 +55,8 @@ const ChartAnalyzer = ({ apiKey }: ChartAnalyzerProps) => {
         direction: result.direction,
         confidence: result.confidence,
       });
-    } catch (err: any) {
-      setError(err?.message || "Analysis failed");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Analysis failed");
     } finally {
       setAnalyzing(false);
     }

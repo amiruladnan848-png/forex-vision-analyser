@@ -41,6 +41,11 @@ const BINANCE_TF: Record<string, string> = {
 interface CacheEntry { candles: OHLC[]; ts: number }
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<OHLC[]>>();
+interface DerivError { message?: string }
+interface DerivCandle { open: number | string; high: number | string; low: number | string; close: number | string; epoch: number }
+interface DerivCandleResponse { error?: DerivError; candles?: DerivCandle[] }
+interface DerivTickResponse { error?: DerivError; tick?: { quote?: number | string } }
+type BinanceKline = [number, string, string, string, string, ...unknown[]];
 const CACHE_TTL: Record<string, number> = {
   "1min": 2_500, "5min": 35_000, "15min": 4 * 60_000, "30min": 8 * 60_000,
   "1h": 20 * 60_000, "4h": 60 * 60_000, "1day": 6 * 3600_000, "1week": 24 * 3600_000,
@@ -71,7 +76,7 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
     }
     let settled = false;
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch {} fn(); } };
+    const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch { void 0; } fn(); } };
     const t = setTimeout(() => done(() => reject(new Error("Deriv timeout"))), 9000);
     ws.onopen = () => {
       ws.send(JSON.stringify({
@@ -86,9 +91,9 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
     ws.onmessage = (ev) => {
       clearTimeout(t);
       try {
-        const d = JSON.parse(ev.data);
+        const d = JSON.parse(ev.data) as DerivCandleResponse;
         if (d.error) return done(() => reject(new Error(d.error.message || "Deriv error")));
-        const raw: any[] = d.candles || [];
+        const raw = d.candles || [];
         if (!raw.length) return done(() => reject(new Error("No data from Deriv (market closed?)")));
         const candles: OHLC[] = raw.map(c => ({
           open: +c.open, high: +c.high, low: +c.low, close: +c.close,
@@ -103,15 +108,51 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
   });
 }
 
+function derivTick(symbol: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") {
+      reject(new Error("Live WebSocket price is not available in this browser"));
+      return;
+    }
+    let settled = false;
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch { void 0; } fn(); } };
+    const t = setTimeout(() => done(() => reject(new Error("Live tick timeout"))), 5000);
+    ws.onopen = () => ws.send(JSON.stringify({ ticks: symbol }));
+    ws.onmessage = (ev) => {
+      clearTimeout(t);
+      try {
+        const d = JSON.parse(ev.data) as DerivTickResponse;
+        if (d.error) return done(() => reject(new Error(d.error.message || "Deriv tick error")));
+        const quote = Number(d.tick?.quote);
+        if (!Number.isFinite(quote)) return done(() => reject(new Error("Live tick unavailable")));
+        done(() => resolve(quote));
+      } catch (e) {
+        done(() => reject(e as Error));
+      }
+    };
+    ws.onerror = () => { clearTimeout(t); done(() => reject(new Error("Deriv live tick connection error"))); };
+  });
+}
+
 async function binanceCandles(symbol: string, tf: string, limit: number): Promise<OHLC[]> {
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${limit}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Binance error ${res.status}`);
-  const arr: any[] = await res.json();
+  const arr = await res.json() as BinanceKline[];
   if (!Array.isArray(arr) || !arr.length) throw new Error("No crypto data");
   return arr.map(k => ({
     open: +k[1], high: +k[2], low: +k[3], close: +k[4],
     datetime: new Date(k[0]).toISOString(),
   })).reverse(); // newest-first
+}
+
+async function binancePrice(symbol: string): Promise<number> {
+  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Binance live price error ${res.status}`);
+  const data = await res.json();
+  const price = Number(data?.price);
+  if (!Number.isFinite(price)) throw new Error("Crypto live price unavailable");
+  return price;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────
@@ -162,6 +203,15 @@ export async function fetchCandles(pair: string, interval: string = "1h", output
 }
 
 export async function fetchLivePrice(pair: string): Promise<number> {
+  try {
+    if (BINANCE_SYMBOLS[pair]) return await binancePrice(BINANCE_SYMBOLS[pair]);
+    if (DERIV_SYMBOLS[pair]) return await derivTick(DERIV_SYMBOLS[pair]);
+  } catch (err) {
+    const candles = await fetchCandles(pair, "1min", 3);
+    const price = candles[0]?.close;
+    if (typeof price === "number" && Number.isFinite(price)) return price;
+    throw err;
+  }
   const candles = await fetchCandles(pair, "1min", 3);
   const price = candles[0]?.close;
   if (typeof price !== "number" || Number.isNaN(price)) throw new Error("Live price unavailable");

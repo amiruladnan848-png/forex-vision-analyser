@@ -29,7 +29,10 @@ const BinarySignalPanel = (_: Props) => {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mtgUsed, setMtgUsed] = useState(false);
   const [resolution, setResolution] = useState<"PENDING" | "LIVE" | "WIN" | "LOSS" | null>(null);
+  const [lockedEntryPrice, setLockedEntryPrice] = useState<number | null>(null);
   const resolvedRef = useRef(false);
+  const entryLockingRef = useRef(false);
+  const entryPriceRef = useRef<number | null>(null);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
@@ -101,6 +104,20 @@ const BinarySignalPanel = (_: Props) => {
     } catch { /* ignore */ }
   };
 
+  const sampleStablePrice = async (targetPair: string, fallback: number) => {
+    const withTimeout = (ms: number) => Promise.race([
+      fetchLivePrice(targetPair),
+      new Promise<number>((resolve) => window.setTimeout(() => resolve(Number.NaN), ms)),
+    ]);
+    const results = await Promise.allSettled([withTimeout(1800), withTimeout(2200), withTimeout(2600)]);
+    const samples = results
+      .map(r => r.status === "fulfilled" ? r.value : Number.NaN)
+      .filter((p): p is number => Number.isFinite(p));
+    if (!samples.length) return fallback;
+    samples.sort((a, b) => a - b);
+    return samples[Math.floor(samples.length / 2)];
+  };
+
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
@@ -115,6 +132,9 @@ const BinarySignalPanel = (_: Props) => {
       setMtgUsed(mtgStep === 1);
       setResolution("PENDING");
       resolvedRef.current = false;
+      entryLockingRef.current = false;
+      entryPriceRef.current = null;
+      setLockedEntryPrice(null);
       setLivePrice(s.entryPrice);
       priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
@@ -132,49 +152,63 @@ const BinarySignalPanel = (_: Props) => {
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
   // ===== AUTO Win/Loss/MTG detection =====
-  // Mark LIVE when entry time hits, then resolve at expiry against live price.
+  // Lock the real live entry tick, monitor until expiry, then resolve against a fresh live tick.
   useEffect(() => {
     if (!signal) return;
     const entryMs = new Date(signal.entryTimeISO).getTime();
     const expiryMs = new Date(signal.expiryISO).getTime();
+    const fallbackEntry = signal.entryPrice;
     let liveT: number | null = null;
     let resolveT: number | null = null;
+    let monitorT: number | null = null;
+
+    const lockEntry = async () => {
+      if (entryLockingRef.current) return;
+      entryLockingRef.current = true;
+      const actualEntry = await sampleStablePrice(signal.pair, priceRef.current ?? fallbackEntry);
+      entryPriceRef.current = actualEntry;
+      priceRef.current = actualEntry;
+      setLockedEntryPrice(actualEntry);
+      setLivePrice(actualEntry);
+      setResolution("LIVE");
+      speakBangla(`${signal.pair.replace("/", " ")} ট্রেড লাইভ। এন্ট্রি মূল্য ${actualEntry.toFixed(decimals)}। এক মিনিট মনিটরিং চলছে।`);
+    };
+
+    const monitor = async () => {
+      if (resolvedRef.current) return;
+      try {
+        const p = await fetchLivePrice(signal.pair);
+        const prev = priceRef.current;
+        if (prev != null && p !== prev) setPriceDir(p > prev ? "up" : "down");
+        priceRef.current = p;
+        setLivePrice(p);
+      } catch { /* keep last tick */ }
+      if (!resolvedRef.current && Date.now() < expiryMs + 500) {
+        monitorT = window.setTimeout(monitor, 900);
+      }
+    };
 
     const toLive = entryMs - Date.now();
     if (toLive > 0) {
-      liveT = window.setTimeout(() => {
-        setResolution(r => (r === "PENDING" ? "LIVE" : r));
-        speakBangla("ট্রেড লাইভ। মূল্য পর্যবেক্ষণ চলছে।");
-      }, toLive);
+      liveT = window.setTimeout(() => { lockEntry(); monitor(); }, toLive);
     } else {
-      setResolution(r => (r === "PENDING" ? "LIVE" : r));
+      lockEntry();
+      monitor();
     }
 
     const toResolve = expiryMs - Date.now() + 800; // small buffer for last tick
     resolveT = window.setTimeout(async () => {
       if (resolvedRef.current) return;
       resolvedRef.current = true;
-      let closePx = priceRef.current ?? signal.entryPrice;
-      try {
-        // Sample 3 ticks ~250ms apart and use the median for stability
-        const samples: number[] = [];
-        for (let i = 0; i < 3; i++) {
-          try {
-            const p = await fetchLivePrice(signal.pair);
-            if (typeof p === "number") samples.push(p);
-          } catch { /* ignore */ }
-          if (i < 2) await new Promise(r => setTimeout(r, 220));
-        }
-        if (samples.length) {
-          samples.sort((a, b) => a - b);
-          closePx = samples[Math.floor(samples.length / 2)];
-        }
-      } catch { /* keep last */ }
-      const tol = Math.max(Math.pow(10, -decimals) * 0.5, signal.entryPrice * 1e-7);
-      const moved = closePx - signal.entryPrice;
+      const entryPx = entryPriceRef.current ?? lockedEntryPrice ?? signal.entryPrice;
+      const closePx = await sampleStablePrice(signal.pair, priceRef.current ?? entryPx);
+      priceRef.current = closePx;
+      setLivePrice(closePx);
+      const tol = Math.max(Math.pow(10, -decimals), entryPx * 2e-7);
+      const moved = closePx - entryPx;
       let won: boolean;
       if (Math.abs(moved) <= tol) {
-        // Treat exact draw as WIN for the user (broker often refunds — favorable UX)
+        // Treat exact/tie as safe WIN/refund instead of false LOSS.
         won = true;
       } else {
         won = signal.direction === "CALL" ? moved > 0 : moved < 0;
@@ -190,7 +224,7 @@ const BinarySignalPanel = (_: Props) => {
       } else {
         setResolution("LOSS");
         toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)} (Δ ${pipsText})`);
-        if (!mtgUsed && canAnalyze) {
+        if (signal.mtgStep === 0 && canAnalyze) {
           speakBangla(
             `${signal.pair.replace("/", " ")} ট্রেড লস ডিটেক্টেড। ক্লোজিং মূল্য ${closePx.toFixed(decimals)}। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।`
           );
@@ -204,9 +238,10 @@ const BinarySignalPanel = (_: Props) => {
     return () => {
       if (liveT) window.clearTimeout(liveT);
       if (resolveT) window.clearTimeout(resolveT);
+      if (monitorT) window.clearTimeout(monitorT);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signal?.entryTimeISO]);
+  }, [signal?.entryTimeISO, signal?.expiryISO]);
 
 
   return (
@@ -236,7 +271,7 @@ const BinarySignalPanel = (_: Props) => {
       </p>
 
       <div className="grid sm:grid-cols-[1fr_auto] gap-3 mb-3">
-        <Select value={pair} onValueChange={(value) => { setPair(value); setSignal(null); setMtgUsed(false); }} disabled={loading}>
+        <Select value={pair} onValueChange={(value) => { setPair(value); setSignal(null); setMtgUsed(false); setResolution(null); setLockedEntryPrice(null); }} disabled={loading}>
           <SelectTrigger className="font-mono"><SelectValue /></SelectTrigger>
           <SelectContent>
             {BINARY_PAIRS.filter(p => PAIRS_MAP[p]).map(p => (
@@ -311,7 +346,8 @@ const BinarySignalPanel = (_: Props) => {
             <div className="grid sm:grid-cols-3 gap-2 mb-3">
               <div className="p-3 rounded bg-background/60 border border-primary/20">
                 <div className="font-mono text-[10px] text-muted-foreground mb-1">ENTRY PRICE</div>
-                <div className="font-display text-xl font-bold text-primary">{signal.entryPrice.toFixed(decimals)}</div>
+                <div className="font-display text-xl font-bold text-primary">{(lockedEntryPrice ?? signal.entryPrice).toFixed(decimals)}</div>
+                {lockedEntryPrice != null && <div className="font-mono text-[10px] text-muted-foreground mt-0.5">LIVE LOCKED</div>}
               </div>
               <div className="p-3 rounded bg-background/60 border border-primary/20">
                 <div className="font-mono text-[10px] text-muted-foreground mb-1">VOLATILITY</div>
