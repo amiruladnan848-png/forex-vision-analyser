@@ -68,19 +68,36 @@ const BinarySignalPanel = (_: Props) => {
     return () => { alive = false; if (timer) window.clearTimeout(timer); };
   }, [pair]);
 
+  // Pre-warm voices (Chrome lazy-loads them)
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const warm = () => window.speechSynthesis.getVoices();
+    warm();
+    window.speechSynthesis.onvoiceschanged = warm;
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, []);
+
   const speakBangla = (text: string) => {
     if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
       const voices = window.speechSynthesis.getVoices();
-      const bn = voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name));
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = bn?.lang || "bn-BD";
-      if (bn) utterance.voice = bn;
-      utterance.rate = 0.94;
-      utterance.pitch = 1.05;
-      utterance.volume = 1;
-      window.speechSynthesis.speak(utterance);
+      const bn =
+        voices.find(v => /bn-?BD/i.test(v.lang)) ||
+        voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name)) ||
+        voices.find(v => /hi-?IN/i.test(v.lang)); // Hindi fallback (closer phonetics than English)
+      // Split long text into clauses for clearer delivery
+      const parts = text.split(/(?<=[।!?])\s+/).filter(Boolean);
+      parts.forEach((part, idx) => {
+        const u = new SpeechSynthesisUtterance(part);
+        u.lang = bn?.lang || "bn-BD";
+        if (bn) u.voice = bn;
+        u.rate = 0.92;
+        u.pitch = 1.08;
+        u.volume = 1;
+        if (idx === 0) window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      });
     } catch { /* ignore */ }
   };
 
