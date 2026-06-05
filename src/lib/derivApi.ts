@@ -113,7 +113,7 @@ function derivTick(symbol: string): Promise<number> {
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch {} fn(); } };
     const t = setTimeout(() => done(() => reject(new Error("Live tick timeout"))), 5000);
-    ws.onopen = () => ws.send(JSON.stringify({ ticks: symbol, subscribe: 0 }));
+    ws.onopen = () => ws.send(JSON.stringify({ ticks: symbol }));
     ws.onmessage = (ev) => {
       clearTimeout(t);
       try {
