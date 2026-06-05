@@ -11,7 +11,7 @@
 // Returns CALL/PUT verdict for the NEXT 1-min candle close, with confidence + expiry in user TZ.
 
 import { PAIRS_MAP, type OHLC } from "./analysisEngine";
-import { fetchCandles } from "./derivApi";
+import { fetchCandles, fetchLivePrice } from "./derivApi";
 import { detectVolatility, boostAccuracy } from "./signalShield";
 
 
@@ -65,7 +65,7 @@ function adxApprox(candles: OHLC[], period = 14): number {
   for (let i = c.length - period; i < c.length; i++) {
     const up = c[i].high - c[i - 1].high;
     const dn = c[i - 1].low - c[i].low;
-    trSum += Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i].low), Math.abs(c[i].low - c[i - 1].close));
+    trSum += Math.max(c[i].high - c[i].low, Math.abs(c[i].high - c[i - 1].close), Math.abs(c[i].low - c[i - 1].close));
     if (up > dn && up > 0) plus += up;
     if (dn > up && dn > 0) minus += dn;
   }
@@ -282,8 +282,10 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   const edge = winning - losing;
   // Penalize razor-thin edges (chop) so confidence reflects real conviction
   const edgePenalty = edge < 6 ? -3 : 0;
+  const confluenceStrength = reasons.length;
+  const qualityGate = confluenceStrength >= 4 ? 3 : confluenceStrength >= 2 ? 1 : -3;
   const rawConf =
-    78 + Math.round(edge * 1.5) + (vol.safeMode ? -1 : 2) + (mtgStep === 1 ? 4 : 0) + edgePenalty;
+    80 + Math.round(edge * 1.6) + (vol.safeMode ? -2 : 3) + (mtgStep === 1 ? 4 : 0) + edgePenalty + qualityGate;
 
   const htfDir: "CALL" | "PUT" | "NEUTRAL" =
     t5 > 0 && t15 > 0 ? "CALL" : t5 < 0 && t15 < 0 ? "PUT" : "NEUTRAL";
@@ -297,9 +299,15 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: mtgStep === 1 ? 86 : 84,
+    minFloor: mtgStep === 1 ? 88 : 85,
   });
   const confidence = boosted.confidence;
+
+  let liveEntryPrice = c0.close;
+  try {
+    const tick = await fetchLivePrice(pair);
+    if (Number.isFinite(tick)) liveEntryPrice = tick;
+  } catch { /* candle close remains the fallback */ }
 
 
   // Entry on the NEXT 1-min candle open, expiry one minute later (cleanest binary timing)
@@ -328,7 +336,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     pair,
     direction: dir,
     confidence,
-    entryPrice: c0.close,
+    entryPrice: liveEntryPrice,
     entryTime: fmt(entryTime),
     entryTimeISO: entryTime.toISOString(),
     expiry: fmt(expiry),
