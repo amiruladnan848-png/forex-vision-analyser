@@ -103,6 +103,33 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
   });
 }
 
+function derivTick(symbol: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") {
+      reject(new Error("Live WebSocket price is not available in this browser"));
+      return;
+    }
+    let settled = false;
+    const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch {} fn(); } };
+    const t = setTimeout(() => done(() => reject(new Error("Live tick timeout"))), 5000);
+    ws.onopen = () => ws.send(JSON.stringify({ ticks: symbol, subscribe: 0 }));
+    ws.onmessage = (ev) => {
+      clearTimeout(t);
+      try {
+        const d = JSON.parse(ev.data);
+        if (d.error) return done(() => reject(new Error(d.error.message || "Deriv tick error")));
+        const quote = Number(d.tick?.quote);
+        if (!Number.isFinite(quote)) return done(() => reject(new Error("Live tick unavailable")));
+        done(() => resolve(quote));
+      } catch (e) {
+        done(() => reject(e as Error));
+      }
+    };
+    ws.onerror = () => { clearTimeout(t); done(() => reject(new Error("Deriv live tick connection error"))); };
+  });
+}
+
 async function binanceCandles(symbol: string, tf: string, limit: number): Promise<OHLC[]> {
   const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf}&limit=${limit}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Binance error ${res.status}`);
@@ -112,6 +139,15 @@ async function binanceCandles(symbol: string, tf: string, limit: number): Promis
     open: +k[1], high: +k[2], low: +k[3], close: +k[4],
     datetime: new Date(k[0]).toISOString(),
   })).reverse(); // newest-first
+}
+
+async function binancePrice(symbol: string): Promise<number> {
+  const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Binance live price error ${res.status}`);
+  const data = await res.json();
+  const price = Number(data?.price);
+  if (!Number.isFinite(price)) throw new Error("Crypto live price unavailable");
+  return price;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────
@@ -162,6 +198,15 @@ export async function fetchCandles(pair: string, interval: string = "1h", output
 }
 
 export async function fetchLivePrice(pair: string): Promise<number> {
+  try {
+    if (BINANCE_SYMBOLS[pair]) return await binancePrice(BINANCE_SYMBOLS[pair]);
+    if (DERIV_SYMBOLS[pair]) return await derivTick(DERIV_SYMBOLS[pair]);
+  } catch (err) {
+    const candles = await fetchCandles(pair, "1min", 3);
+    const price = candles[0]?.close;
+    if (typeof price === "number" && Number.isFinite(price)) return price;
+    throw err;
+  }
   const candles = await fetchCandles(pair, "1min", 3);
   const price = candles[0]?.close;
   if (typeof price !== "number" || Number.isNaN(price)) throw new Error("Live price unavailable");
