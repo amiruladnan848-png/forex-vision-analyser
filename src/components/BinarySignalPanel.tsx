@@ -271,7 +271,7 @@ const BinarySignalPanel = (_: Props) => {
       </p>
 
       <div className="grid sm:grid-cols-[1fr_auto] gap-3 mb-3">
-        <Select value={pair} onValueChange={(value) => { setPair(value); setSignal(null); setMtgUsed(false); }} disabled={loading}>
+        <Select value={pair} onValueChange={(value) => { setPair(value); setSignal(null); setMtgUsed(false); setResolution(null); setLockedEntryPrice(null); }} disabled={loading}>
           <SelectTrigger className="font-mono"><SelectValue /></SelectTrigger>
           <SelectContent>
             {BINARY_PAIRS.filter(p => PAIRS_MAP[p]).map(p => (
@@ -346,7 +346,8 @@ const BinarySignalPanel = (_: Props) => {
             <div className="grid sm:grid-cols-3 gap-2 mb-3">
               <div className="p-3 rounded bg-background/60 border border-primary/20">
                 <div className="font-mono text-[10px] text-muted-foreground mb-1">ENTRY PRICE</div>
-                <div className="font-display text-xl font-bold text-primary">{signal.entryPrice.toFixed(decimals)}</div>
+                <div className="font-display text-xl font-bold text-primary">{(lockedEntryPrice ?? signal.entryPrice).toFixed(decimals)}</div>
+                {lockedEntryPrice != null && <div className="font-mono text-[10px] text-muted-foreground mt-0.5">LIVE LOCKED</div>}
               </div>
               <div className="p-3 rounded bg-background/60 border border-primary/20">
                 <div className="font-mono text-[10px] text-muted-foreground mb-1">VOLATILITY</div>
