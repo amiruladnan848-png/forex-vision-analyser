@@ -29,7 +29,10 @@ const BinarySignalPanel = (_: Props) => {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [mtgUsed, setMtgUsed] = useState(false);
   const [resolution, setResolution] = useState<"PENDING" | "LIVE" | "WIN" | "LOSS" | null>(null);
+  const [lockedEntryPrice, setLockedEntryPrice] = useState<number | null>(null);
   const resolvedRef = useRef(false);
+  const entryLockingRef = useRef(false);
+  const entryPriceRef = useRef<number | null>(null);
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
@@ -101,6 +104,20 @@ const BinarySignalPanel = (_: Props) => {
     } catch { /* ignore */ }
   };
 
+  const sampleStablePrice = async (targetPair: string, fallback: number) => {
+    const samples: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      try {
+        const p = await fetchLivePrice(targetPair);
+        if (typeof p === "number" && Number.isFinite(p)) samples.push(p);
+      } catch { /* keep sampling */ }
+      if (i < 4) await new Promise(r => setTimeout(r, 180));
+    }
+    if (!samples.length) return fallback;
+    samples.sort((a, b) => a - b);
+    return samples[Math.floor(samples.length / 2)];
+  };
+
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
@@ -115,6 +132,9 @@ const BinarySignalPanel = (_: Props) => {
       setMtgUsed(mtgStep === 1);
       setResolution("PENDING");
       resolvedRef.current = false;
+      entryLockingRef.current = false;
+      entryPriceRef.current = null;
+      setLockedEntryPrice(null);
       setLivePrice(s.entryPrice);
       priceRef.current = s.entryPrice;
       await recordUsage({ pair, direction: s.direction, confidence: s.confidence });
