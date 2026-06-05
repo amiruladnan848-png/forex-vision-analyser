@@ -152,49 +152,63 @@ const BinarySignalPanel = (_: Props) => {
   const decimals = PAIRS_MAP[pair]?.decimals ?? 5;
 
   // ===== AUTO Win/Loss/MTG detection =====
-  // Mark LIVE when entry time hits, then resolve at expiry against live price.
+  // Lock the real live entry tick, monitor until expiry, then resolve against a fresh live tick.
   useEffect(() => {
     if (!signal) return;
     const entryMs = new Date(signal.entryTimeISO).getTime();
     const expiryMs = new Date(signal.expiryISO).getTime();
+    const fallbackEntry = signal.entryPrice;
     let liveT: number | null = null;
     let resolveT: number | null = null;
+    let monitorT: number | null = null;
+
+    const lockEntry = async () => {
+      if (entryLockingRef.current) return;
+      entryLockingRef.current = true;
+      const actualEntry = await sampleStablePrice(signal.pair, priceRef.current ?? fallbackEntry);
+      entryPriceRef.current = actualEntry;
+      priceRef.current = actualEntry;
+      setLockedEntryPrice(actualEntry);
+      setLivePrice(actualEntry);
+      setResolution("LIVE");
+      speakBangla(`${signal.pair.replace("/", " ")} ট্রেড লাইভ। এন্ট্রি মূল্য ${actualEntry.toFixed(decimals)}। এক মিনিট মনিটরিং চলছে।`);
+    };
+
+    const monitor = async () => {
+      if (resolvedRef.current) return;
+      try {
+        const p = await fetchLivePrice(signal.pair);
+        const prev = priceRef.current;
+        if (prev != null && p !== prev) setPriceDir(p > prev ? "up" : "down");
+        priceRef.current = p;
+        setLivePrice(p);
+      } catch { /* keep last tick */ }
+      if (!resolvedRef.current && Date.now() < expiryMs + 500) {
+        monitorT = window.setTimeout(monitor, 900);
+      }
+    };
 
     const toLive = entryMs - Date.now();
     if (toLive > 0) {
-      liveT = window.setTimeout(() => {
-        setResolution(r => (r === "PENDING" ? "LIVE" : r));
-        speakBangla("ট্রেড লাইভ। মূল্য পর্যবেক্ষণ চলছে।");
-      }, toLive);
+      liveT = window.setTimeout(() => { lockEntry(); monitor(); }, toLive);
     } else {
-      setResolution(r => (r === "PENDING" ? "LIVE" : r));
+      lockEntry();
+      monitor();
     }
 
     const toResolve = expiryMs - Date.now() + 800; // small buffer for last tick
     resolveT = window.setTimeout(async () => {
       if (resolvedRef.current) return;
       resolvedRef.current = true;
-      let closePx = priceRef.current ?? signal.entryPrice;
-      try {
-        // Sample 3 ticks ~250ms apart and use the median for stability
-        const samples: number[] = [];
-        for (let i = 0; i < 3; i++) {
-          try {
-            const p = await fetchLivePrice(signal.pair);
-            if (typeof p === "number") samples.push(p);
-          } catch { /* ignore */ }
-          if (i < 2) await new Promise(r => setTimeout(r, 220));
-        }
-        if (samples.length) {
-          samples.sort((a, b) => a - b);
-          closePx = samples[Math.floor(samples.length / 2)];
-        }
-      } catch { /* keep last */ }
-      const tol = Math.max(Math.pow(10, -decimals) * 0.5, signal.entryPrice * 1e-7);
-      const moved = closePx - signal.entryPrice;
+      const entryPx = entryPriceRef.current ?? lockedEntryPrice ?? signal.entryPrice;
+      const closePx = await sampleStablePrice(signal.pair, priceRef.current ?? entryPx);
+      priceRef.current = closePx;
+      setLivePrice(closePx);
+      const tol = Math.max(Math.pow(10, -decimals), entryPx * 2e-7);
+      const moved = closePx - entryPx;
       let won: boolean;
       if (Math.abs(moved) <= tol) {
-        // Treat exact draw as WIN for the user (broker often refunds — favorable UX)
+        // Treat exact/tie as safe WIN/refund instead of false LOSS.
         won = true;
       } else {
         won = signal.direction === "CALL" ? moved > 0 : moved < 0;
@@ -210,7 +224,7 @@ const BinarySignalPanel = (_: Props) => {
       } else {
         setResolution("LOSS");
         toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)} (Δ ${pipsText})`);
-        if (!mtgUsed && canAnalyze) {
+        if (signal.mtgStep === 0 && canAnalyze) {
           speakBangla(
             `${signal.pair.replace("/", " ")} ট্রেড লস ডিটেক্টেড। ক্লোজিং মূল্য ${closePx.toFixed(decimals)}। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।`
           );
@@ -224,9 +238,10 @@ const BinarySignalPanel = (_: Props) => {
     return () => {
       if (liveT) window.clearTimeout(liveT);
       if (resolveT) window.clearTimeout(resolveT);
+      if (monitorT) window.clearTimeout(monitorT);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signal?.entryTimeISO]);
+  }, [signal?.entryTimeISO, signal?.expiryISO]);
 
 
   return (
