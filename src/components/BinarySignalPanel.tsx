@@ -105,14 +105,14 @@ const BinarySignalPanel = (_: Props) => {
   };
 
   const sampleStablePrice = async (targetPair: string, fallback: number) => {
-    const samples: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      try {
-        const p = await fetchLivePrice(targetPair);
-        if (typeof p === "number" && Number.isFinite(p)) samples.push(p);
-      } catch { /* keep sampling */ }
-      if (i < 4) await new Promise(r => setTimeout(r, 180));
-    }
+    const withTimeout = (ms: number) => Promise.race([
+      fetchLivePrice(targetPair),
+      new Promise<number>((resolve) => window.setTimeout(() => resolve(Number.NaN), ms)),
+    ]);
+    const results = await Promise.allSettled([withTimeout(1800), withTimeout(2200), withTimeout(2600)]);
+    const samples = results
+      .map(r => r.status === "fulfilled" ? r.value : Number.NaN)
+      .filter((p): p is number => Number.isFinite(p));
     if (!samples.length) return fallback;
     samples.sort((a, b) => a - b);
     return samples[Math.floor(samples.length / 2)];
