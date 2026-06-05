@@ -270,10 +270,20 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     caution = "MTG step 1/1 — use only after previous loss";
   }
 
-  const dir: "CALL" | "PUT" = bullScore >= bearScore ? "CALL" : "PUT";
+  const dir: "CALL" | "PUT" =
+    bullScore === bearScore
+      ? // perfect tie — break with HTF trend, then last candle direction
+        t5 > 0 || (t5 === 0 && isBull0) ? "CALL" : "PUT"
+      : bullScore > bearScore
+      ? "CALL"
+      : "PUT";
   const winning = Math.max(bullScore, bearScore);
   const losing = Math.min(bullScore, bearScore);
-  const rawConf = 76 + Math.round((winning - losing) * 1.45) + (vol.safeMode ? -1 : 2) + (mtgStep === 1 ? 4 : 0);
+  const edge = winning - losing;
+  // Penalize razor-thin edges (chop) so confidence reflects real conviction
+  const edgePenalty = edge < 6 ? -3 : 0;
+  const rawConf =
+    78 + Math.round(edge * 1.5) + (vol.safeMode ? -1 : 2) + (mtgStep === 1 ? 4 : 0) + edgePenalty;
 
   const htfDir: "CALL" | "PUT" | "NEUTRAL" =
     t5 > 0 && t15 > 0 ? "CALL" : t5 < 0 && t15 < 0 ? "PUT" : "NEUTRAL";
@@ -287,7 +297,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: mtgStep === 1 ? 84 : 82,
+    minFloor: mtgStep === 1 ? 86 : 84,
   });
   const confidence = boosted.confidence;
 
