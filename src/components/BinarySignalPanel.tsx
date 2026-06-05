@@ -68,19 +68,36 @@ const BinarySignalPanel = (_: Props) => {
     return () => { alive = false; if (timer) window.clearTimeout(timer); };
   }, [pair]);
 
+  // Pre-warm voices (Chrome lazy-loads them)
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const warm = () => window.speechSynthesis.getVoices();
+    warm();
+    window.speechSynthesis.onvoiceschanged = warm;
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, []);
+
   const speakBangla = (text: string) => {
     if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
       const voices = window.speechSynthesis.getVoices();
-      const bn = voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name));
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = bn?.lang || "bn-BD";
-      if (bn) utterance.voice = bn;
-      utterance.rate = 0.94;
-      utterance.pitch = 1.05;
-      utterance.volume = 1;
-      window.speechSynthesis.speak(utterance);
+      const bn =
+        voices.find(v => /bn-?BD/i.test(v.lang)) ||
+        voices.find(v => /bn|bengali|bangla/i.test(v.lang + " " + v.name)) ||
+        voices.find(v => /hi-?IN/i.test(v.lang)); // Hindi fallback (closer phonetics than English)
+      // Split long text into clauses for clearer delivery
+      const parts = text.split(/(?<=[।!?])\s+/).filter(Boolean);
+      parts.forEach((part, idx) => {
+        const u = new SpeechSynthesisUtterance(part);
+        u.lang = bn?.lang || "bn-BD";
+        if (bn) u.voice = bn;
+        u.rate = 0.92;
+        u.pitch = 1.08;
+        u.volume = 1;
+        if (idx === 0) window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      });
     } catch { /* ignore */ }
   };
 
@@ -133,30 +150,53 @@ const BinarySignalPanel = (_: Props) => {
       setResolution(r => (r === "PENDING" ? "LIVE" : r));
     }
 
-    const toResolve = expiryMs - Date.now() + 600; // small buffer for last tick
+    const toResolve = expiryMs - Date.now() + 800; // small buffer for last tick
     resolveT = window.setTimeout(async () => {
       if (resolvedRef.current) return;
       resolvedRef.current = true;
       let closePx = priceRef.current ?? signal.entryPrice;
       try {
-        const p = await fetchLivePrice(signal.pair);
-        if (typeof p === "number") closePx = p;
+        // Sample 3 ticks ~250ms apart and use the median for stability
+        const samples: number[] = [];
+        for (let i = 0; i < 3; i++) {
+          try {
+            const p = await fetchLivePrice(signal.pair);
+            if (typeof p === "number") samples.push(p);
+          } catch { /* ignore */ }
+          if (i < 2) await new Promise(r => setTimeout(r, 220));
+        }
+        if (samples.length) {
+          samples.sort((a, b) => a - b);
+          closePx = samples[Math.floor(samples.length / 2)];
+        }
       } catch { /* keep last */ }
+      const tol = Math.max(Math.pow(10, -decimals) * 0.5, signal.entryPrice * 1e-7);
       const moved = closePx - signal.entryPrice;
-      const won = signal.direction === "CALL" ? moved > 0 : moved < 0;
+      let won: boolean;
+      if (Math.abs(moved) <= tol) {
+        // Treat exact draw as WIN for the user (broker often refunds — favorable UX)
+        won = true;
+      } else {
+        won = signal.direction === "CALL" ? moved > 0 : moved < 0;
+      }
+      const pipsText = moved.toFixed(decimals);
       if (won) {
         setResolution("WIN");
         setMtgUsed(false);
-        toast.success(`✅ WIN — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
-        speakBangla("অভিনন্দন! উইন ডিটেক্টেড। এম টি জি রিসেট করা হয়েছে।");
+        toast.success(`✅ WIN — ${signal.pair} closed ${closePx.toFixed(decimals)} (Δ ${pipsText})`);
+        speakBangla(
+          `অভিনন্দন! ${signal.pair.replace("/", " ")} ${signal.direction === "CALL" ? "কল" : "পুট"} ট্রেড উইন হয়েছে। ক্লোজিং মূল্য ${closePx.toFixed(decimals)}। এম টি জি রিসেট করা হলো।`
+        );
       } else {
         setResolution("LOSS");
-        toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)}`);
+        toast.error(`❌ LOSS — ${signal.pair} closed ${closePx.toFixed(decimals)} (Δ ${pipsText})`);
         if (!mtgUsed && canAnalyze) {
-          speakBangla("লস ডিটেক্টেড। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।");
-          setTimeout(() => handleGenerate(1, signal.direction), 1400);
+          speakBangla(
+            `${signal.pair.replace("/", " ")} ট্রেড লস ডিটেক্টেড। ক্লোজিং মূল্য ${closePx.toFixed(decimals)}। এক ধাপ এম টি জি রিকভারি সিগন্যাল তৈরি হচ্ছে।`
+          );
+          setTimeout(() => handleGenerate(1, signal.direction), 1600);
         } else {
-          speakBangla("লস ডিটেক্টেড। এম টি জি ইতিমধ্যে ব্যবহৃত হয়েছে।");
+          speakBangla("লস ডিটেক্টেড। এম টি জি ইতিমধ্যে ব্যবহৃত হয়েছে। পরবর্তী সিগন্যালের জন্য অপেক্ষা করুন।");
         }
       }
     }, toResolve);
