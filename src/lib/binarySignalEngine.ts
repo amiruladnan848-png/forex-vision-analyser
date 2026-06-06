@@ -299,7 +299,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: mtgStep === 1 ? 88 : 85,
+    minFloor: mtgStep === 1 ? 89 : 86,
   });
   const confidence = boosted.confidence;
 
