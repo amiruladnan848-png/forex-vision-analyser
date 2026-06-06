@@ -402,13 +402,60 @@ const BinarySignalPanel = (_: Props) => {
         </Select>
         <Button
           onClick={() => handleGenerate()}
-          disabled={loading || !canAnalyze}
+          disabled={loading || !canAnalyze || weekend.locked}
           size="lg"
-          className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90"
+          className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90 disabled:opacity-60"
         >
-          {loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>) : (<><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>)}
+          {weekend.locked ? (<><Lock className="w-4 h-4 mr-2" /> WEEKEND LOCK</>) :
+            loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>) :
+            (<><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>)}
         </Button>
       </div>
+
+      {weekend.locked && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="mb-3 p-3 rounded-lg border-2 border-warning/50 bg-warning/10 flex items-start gap-3"
+        >
+          <Lock className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-display text-sm font-bold text-warning tracking-wider">WEEKEND • SIGNAL ENGINE LOCKED</div>
+            <div className="font-mono text-[11px] text-muted-foreground mt-1">{weekend.msg}</div>
+          </div>
+        </motion.div>
+      )}
+
+      {!weekend.locked && pulse && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="mb-3 p-3 rounded-lg border border-primary/30 bg-primary/5 relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <ScanLine className="w-4 h-4 text-primary animate-pulse" />
+              <span className="font-display text-[11px] tracking-widest text-primary">CONTINUOUS ANALYSES • LIVE</span>
+            </div>
+            <span className="font-mono text-[10px] text-muted-foreground">{pulse.updatedAt}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">BIAS</div>
+              <div className={`font-display text-sm font-bold ${pulse.bias === "BULL" ? "text-buy" : pulse.bias === "BEAR" ? "text-sell" : "text-muted-foreground"}`}>{pulse.bias}</div>
+            </div>
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">QUALITY</div>
+              <div className={`font-display text-sm font-bold ${pulse.score >= 75 ? "text-buy" : pulse.score >= 55 ? "text-primary" : "text-warning"}`}>{pulse.score}%</div>
+            </div>
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">RSI(7)</div>
+              <div className="font-display text-sm font-bold">{pulse.rsi.toFixed(0)}</div>
+            </div>
+          </div>
+          <div className="font-mono text-[11px] text-muted-foreground mt-2 truncate">
+            ◉ {pulse.candleState}
+          </div>
+        </motion.div>
+      )}
 
       {/* Live price ticker */}
       <div className="flex items-center justify-between mb-3 px-3 py-2 rounded bg-background/50 border border-border/40">
