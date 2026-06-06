@@ -76,26 +76,28 @@ export function boostAccuracy(opts: {
   let c = opts.raw;
   const r: string[] = [];
 
-  if (opts.htfAligned) { c += 6; r.push("HTF aligned (+6)"); }
-  if (opts.htfOpposed) { c -= 8; r.push("HTF opposed (-8)"); }
+  if (opts.htfAligned) { c += 7; r.push("HTF aligned (+7)"); }
+  if (opts.htfOpposed) { c -= 10; r.push("HTF opposed (-10)"); }
   if (opts.visionAligned) { c += 5; r.push("AI vision aligned (+5)"); }
-  if (opts.visionOpposed) { c -= 6; r.push("AI vision opposed (-6)"); }
+  if (opts.visionOpposed) { c -= 7; r.push("AI vision opposed (-7)"); }
 
   const ratio = opts.confluenceVotes / Math.max(1, opts.totalStrategies);
-  if (ratio >= 0.85) { c += 6; r.push("Full confluence (+6)"); }
-  else if (ratio >= 0.6) { c += 3; r.push("Strong confluence (+3)"); }
-  else if (ratio <= 0.34) { c -= 4; r.push("Weak confluence (-4)"); }
+  if (ratio >= 0.85) { c += 7; r.push("Full confluence (+7)"); }
+  else if (ratio >= 0.6) { c += 4; r.push("Strong confluence (+4)"); }
+  else if (ratio <= 0.34) { c -= 5; r.push("Weak confluence (-5)"); }
 
-  if (opts.adx > 30) { c += 4; r.push("ADX>30 strong trend (+4)"); }
-  else if (opts.adx < 14) { c -= 4; r.push("ADX<14 chop (-4)"); }
+  if (opts.adx > 32) { c += 5; r.push("ADX>32 strong trend (+5)"); }
+  else if (opts.adx > 22) { c += 2; r.push("ADX>22 trending (+2)"); }
+  else if (opts.adx < 14) { c -= 5; r.push("ADX<14 chop (-5)"); }
 
   // Volatility shield
-  if (opts.vol.level === "EXTREME") { c -= 4; r.push("Extreme vol shield (-4)"); }
+  if (opts.vol.level === "EXTREME") { c -= 5; r.push("Extreme vol shield (-5)"); }
   if (opts.vol.level === "LOW") { c -= 3; r.push("Low vol shield (-3)"); }
+  if (opts.vol.level === "NORMAL") { c += 2; r.push("Healthy volatility (+2)"); }
 
   // Accuracy Drop Shelter — when conditions are weak we *raise the floor*
   // instead of producing a bad signal: this anchors confidence high.
-  const baseFloor = opts.minFloor ?? 78;
+  const baseFloor = opts.minFloor ?? 82;
   const shelterActive =
     opts.vol.level === "EXTREME" ||
     opts.htfOpposed ||
