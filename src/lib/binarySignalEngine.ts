@@ -190,6 +190,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   const bands = bb(closes, 20, 2);
   const st = stoch(candles, 14);
   const adx = adxApprox(candles);
+  const mac = macd(closes);
 
   const c0 = candles[0], c1 = candles[1], c2 = candles[2];
   const body0 = Math.abs(c0.close - c0.open) || 1e-9;
