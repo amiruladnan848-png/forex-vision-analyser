@@ -385,6 +385,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
       `Stoch K/D: ${st.k.toFixed(0)}/${st.d.toFixed(0)}`,
       `BB: ${bands.lower.toFixed(info.decimals)}-${bands.upper.toFixed(info.decimals)}`,
       `ADX~: ${adx.toFixed(1)}`,
+      `MACD hist: ${mac.hist >= 0 ? "▲" : "▼"} ${mac.hist.toFixed(info.decimals)}`,
       `5m trend: ${t5 > 0 ? "▲" : "▼"} | 15m: ${t15 > 0 ? "▲" : "▼"}`,
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
