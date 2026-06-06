@@ -234,6 +234,12 @@ const BinarySignalPanel = (_: Props) => {
   };
 
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
+    const lock = getWeekendLock(pair);
+    if (lock.locked) {
+      toast.error(lock.msg);
+      speakBangla("সাপ্তাহিক ছুটির কারণে ফরেক্স মার্কেট বন্ধ। সিগন্যাল ইঞ্জিন লক করা হয়েছে।");
+      return;
+    }
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
       return;
