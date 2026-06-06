@@ -108,7 +108,7 @@ function derivCandles(symbol: string, granularity: number, count: number): Promi
   });
 }
 
-function derivTick(symbol: string): Promise<number> {
+function derivTickOnce(symbol: string, timeoutMs = 3500): Promise<number> {
   return new Promise((resolve, reject) => {
     if (typeof WebSocket === "undefined") {
       reject(new Error("Live WebSocket price is not available in this browser"));
@@ -117,7 +117,7 @@ function derivTick(symbol: string): Promise<number> {
     let settled = false;
     const ws = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
     const done = (fn: () => void) => { if (!settled) { settled = true; try { ws.close(); } catch { void 0; } fn(); } };
-    const t = setTimeout(() => done(() => reject(new Error("Live tick timeout"))), 5000);
+    const t = setTimeout(() => done(() => reject(new Error("Live tick timeout"))), timeoutMs);
     ws.onopen = () => ws.send(JSON.stringify({ ticks: symbol }));
     ws.onmessage = (ev) => {
       clearTimeout(t);
@@ -133,6 +133,12 @@ function derivTick(symbol: string): Promise<number> {
     };
     ws.onerror = () => { clearTimeout(t); done(() => reject(new Error("Deriv live tick connection error"))); };
   });
+}
+
+// Resilient tick: one retry on transient failure for ultra-fast live updates.
+async function derivTick(symbol: string): Promise<number> {
+  try { return await derivTickOnce(symbol, 3500); }
+  catch { return await derivTickOnce(symbol, 4500); }
 }
 
 async function binanceCandles(symbol: string, tf: string, limit: number): Promise<OHLC[]> {

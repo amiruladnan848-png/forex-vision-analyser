@@ -73,6 +73,26 @@ function adxApprox(candles: OHLC[], period = 14): number {
   return Math.min(60, di);
 }
 
+// MACD(12,26,9) momentum — returns histogram & cross direction
+function macd(closes: number[]) {
+  if (closes.length < 30) return { hist: 0, prevHist: 0, line: 0, signal: 0 };
+  const chron = [...closes].reverse();
+  const e12 = ema(chron, 12);
+  const e26 = ema(chron, 26);
+  const line: number[] = e12.map((v, i) => v - e26[i]);
+  const sig = ema(line, 9);
+  const lastLine = line[line.length - 1];
+  const lastSig = sig[sig.length - 1];
+  const prevLine = line[line.length - 2] ?? lastLine;
+  const prevSig = sig[sig.length - 2] ?? lastSig;
+  return {
+    hist: lastLine - lastSig,
+    prevHist: prevLine - prevSig,
+    line: lastLine,
+    signal: lastSig,
+  };
+}
+
 // Aggregate N 1-min candles (newest-first order) into higher-tf candles
 function aggregate(candles: OHLC[], factor: number): OHLC[] {
   // candles[0] is newest. Reverse to chronological, group, then reverse back.
@@ -170,6 +190,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   const bands = bb(closes, 20, 2);
   const st = stoch(candles, 14);
   const adx = adxApprox(candles);
+  const mac = macd(closes);
 
   const c0 = candles[0], c1 = candles[1], c2 = candles[2];
   const body0 = Math.abs(c0.close - c0.open) || 1e-9;
@@ -247,6 +268,15 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   if (isBull0 && isBull1 && c2.close > c2.open) { bullScore += 5; reasons.push("3 bullish candles"); }
   if (!isBull0 && !isBull1 && c2.close < c2.open) { bearScore += 5; reasons.push("3 bearish candles"); }
 
+  // 10b. MACD(12,26,9) momentum confluence
+  if (mac.hist > 0 && mac.hist > mac.prevHist) { bullScore += 9; reasons.push("MACD bullish momentum"); }
+  else if (mac.hist > 0) { bullScore += 4; }
+  if (mac.hist < 0 && mac.hist < mac.prevHist) { bearScore += 9; reasons.push("MACD bearish momentum"); }
+  else if (mac.hist < 0) { bearScore += 4; }
+  // Cross detection
+  if (mac.prevHist <= 0 && mac.hist > 0) { bullScore += 6; reasons.push("MACD bullish cross"); }
+  if (mac.prevHist >= 0 && mac.hist < 0) { bearScore += 6; reasons.push("MACD bearish cross"); }
+
   // 11. Session weighting
   const sess = sessionBoost();
   if (Math.abs(bullScore - bearScore) > 5) {
@@ -299,7 +329,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
     confluenceVotes: winning > losing ? 3 : 1,
     totalStrategies: 3,
     adx,
-    minFloor: mtgStep === 1 ? 89 : 86,
+    minFloor: mtgStep === 1 ? 90 : 87,
   });
   const confidence = boosted.confidence;
 
@@ -355,6 +385,7 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
       `Stoch K/D: ${st.k.toFixed(0)}/${st.d.toFixed(0)}`,
       `BB: ${bands.lower.toFixed(info.decimals)}-${bands.upper.toFixed(info.decimals)}`,
       `ADX~: ${adx.toFixed(1)}`,
+      `MACD hist: ${mac.hist >= 0 ? "▲" : "▼"} ${mac.hist.toFixed(info.decimals)}`,
       `5m trend: ${t5 > 0 ? "▲" : "▼"} | 15m: ${t15 > 0 ? "▲" : "▼"}`,
       `VWAP: ${vwap.toFixed(info.decimals)}`,
       `Session: ${sess.label}`,
