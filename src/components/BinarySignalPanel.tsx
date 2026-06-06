@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield, Lock, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
-import { fetchLivePrice } from "@/lib/derivApi";
+import { fetchLivePrice, fetchCandles } from "@/lib/derivApi";
 import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
 import TradingViewMiniChart from "./TradingViewMiniChart";
 
@@ -15,6 +15,21 @@ const BINARY_PAIRS = [
   "EUR/JPY", "GBP/JPY", "EUR/GBP", "AUD/JPY",
   "XAU/USD", "BTC/USD", "ETH/USD",
 ];
+
+// Crypto trades 24/7; forex/metals are closed on the weekend.
+const CRYPTO_PAIRS = new Set(["BTC/USD", "ETH/USD"]);
+const getWeekendLock = (pair: string) => {
+  if (CRYPTO_PAIRS.has(pair)) return { locked: false, msg: "" };
+  const d = new Date();
+  const day = d.getUTCDay(); // 0=Sun .. 6=Sat
+  const h = d.getUTCHours();
+  // Forex closes Fri 21:00 UTC and reopens Sun 21:00 UTC.
+  const locked =
+    day === 6 ||
+    (day === 0 && h < 21) ||
+    (day === 5 && h >= 21);
+  return { locked, msg: locked ? "Forex market closed — weekend lock active. Switch to BTC/ETH or wait for Sunday 21:00 UTC." : "" };
+};
 
 interface Props { apiKey?: string }
 
