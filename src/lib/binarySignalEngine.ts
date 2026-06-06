@@ -268,6 +268,15 @@ export async function generateBinarySignal(pair: string, optsOrKey?: BinarySigna
   if (isBull0 && isBull1 && c2.close > c2.open) { bullScore += 5; reasons.push("3 bullish candles"); }
   if (!isBull0 && !isBull1 && c2.close < c2.open) { bearScore += 5; reasons.push("3 bearish candles"); }
 
+  // 10b. MACD(12,26,9) momentum confluence
+  if (mac.hist > 0 && mac.hist > mac.prevHist) { bullScore += 9; reasons.push("MACD bullish momentum"); }
+  else if (mac.hist > 0) { bullScore += 4; }
+  if (mac.hist < 0 && mac.hist < mac.prevHist) { bearScore += 9; reasons.push("MACD bearish momentum"); }
+  else if (mac.hist < 0) { bearScore += 4; }
+  // Cross detection
+  if (mac.prevHist <= 0 && mac.hist > 0) { bullScore += 6; reasons.push("MACD bullish cross"); }
+  if (mac.prevHist >= 0 && mac.hist < 0) { bearScore += 6; reasons.push("MACD bearish cross"); }
+
   // 11. Session weighting
   const sess = sessionBoost();
   if (Math.abs(bullScore - bearScore) > 5) {
