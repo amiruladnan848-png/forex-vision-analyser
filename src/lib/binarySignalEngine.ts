@@ -71,6 +71,25 @@ function adxApprox(candles: OHLC[], period = 14): number {
   }
   const di = trSum > 0 ? Math.abs(plus - minus) / (plus + minus + 1e-9) * 100 : 0;
   return Math.min(60, di);
+
+// MACD(12,26,9) momentum — returns histogram & cross direction
+function macd(closes: number[]) {
+  if (closes.length < 30) return { hist: 0, prevHist: 0, line: 0, signal: 0 };
+  const chron = [...closes].reverse();
+  const e12 = ema(chron, 12);
+  const e26 = ema(chron, 26);
+  const line: number[] = e12.map((v, i) => v - e26[i]);
+  const sig = ema(line, 9);
+  const lastLine = line[line.length - 1];
+  const lastSig = sig[sig.length - 1];
+  const prevLine = line[line.length - 2] ?? lastLine;
+  const prevSig = sig[sig.length - 2] ?? lastSig;
+  return {
+    hist: lastLine - lastSig,
+    prevHist: prevLine - prevSig,
+    line: lastLine,
+    signal: lastSig,
+  };
 }
 
 // Aggregate N 1-min candles (newest-first order) into higher-tf candles
