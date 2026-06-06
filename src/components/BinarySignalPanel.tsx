@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield } from "lucide-react";
+import { Zap, TrendingUp, TrendingDown, Loader2, Clock, AlertTriangle, Radio, Maximize2, Minimize2, Activity, Volume2, CheckCircle2, XCircle, Shield, Lock, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { generateBinarySignal, type BinarySignal } from "@/lib/binarySignalEngine";
 import { PAIRS_MAP } from "@/lib/analysisEngine";
-import { fetchLivePrice } from "@/lib/derivApi";
+import { fetchLivePrice, fetchCandles } from "@/lib/derivApi";
 import { useBinarySignalUsage, BINARY_DAILY_LIMIT } from "@/hooks/useBinarySignalUsage";
 import TradingViewMiniChart from "./TradingViewMiniChart";
 
@@ -15,6 +15,21 @@ const BINARY_PAIRS = [
   "EUR/JPY", "GBP/JPY", "EUR/GBP", "AUD/JPY",
   "XAU/USD", "BTC/USD", "ETH/USD",
 ];
+
+// Crypto trades 24/7; forex/metals are closed on the weekend.
+const CRYPTO_PAIRS = new Set(["BTC/USD", "ETH/USD"]);
+const getWeekendLock = (pair: string) => {
+  if (CRYPTO_PAIRS.has(pair)) return { locked: false, msg: "" };
+  const d = new Date();
+  const day = d.getUTCDay(); // 0=Sun .. 6=Sat
+  const h = d.getUTCHours();
+  // Forex closes Fri 21:00 UTC and reopens Sun 21:00 UTC.
+  const locked =
+    day === 6 ||
+    (day === 0 && h < 21) ||
+    (day === 5 && h >= 21);
+  return { locked, msg: locked ? "Forex market closed — weekend lock active. Switch to BTC/ETH or wait for Sunday 21:00 UTC." : "" };
+};
 
 interface Props { apiKey?: string }
 
@@ -36,6 +51,106 @@ const BinarySignalPanel = (_: Props) => {
   const { canAnalyze, recordUsage, count, remaining } = useBinarySignalUsage();
   const tickRef = useRef<number | null>(null);
   const priceRef = useRef<number | null>(null);
+
+  // ===== Weekend lock (forex/metals) — auto-refreshing every 30s =====
+  const [weekend, setWeekend] = useState(() => getWeekendLock(pair));
+  useEffect(() => {
+    setWeekend(getWeekendLock(pair));
+    const t = window.setInterval(() => setWeekend(getWeekendLock(pair)), 30_000);
+    return () => window.clearInterval(t);
+  }, [pair]);
+
+  // ===== Continuous Analyses Engine =====
+  // Every second we refresh a lightweight market-pulse score driven by:
+  //  • Live price drift vs last EMA snapshot
+  //  • Last candle body & wick balance
+  //  • Short-term momentum bias (RSI-lite from last 14 closes)
+  // Heavy work (candle fetch) runs every 6s; pulse recomputes every 1s using cached candles.
+  const [pulse, setPulse] = useState<{
+    bias: "BULL" | "BEAR" | "NEUTRAL";
+    score: number;            // 0..100 — overall analysis quality
+    rsi: number;
+    candleState: string;
+    updatedAt: string;
+  } | null>(null);
+  const candlesCacheRef = useRef<{ pair: string; data: { open: number; close: number; high: number; low: number }[] } | null>(null);
+
+  useEffect(() => {
+    if (weekend.locked) { setPulse(null); return; }
+    let alive = true;
+    let pulseT: number | null = null;
+    let fetchT: number | null = null;
+
+    const computePulse = () => {
+      const cache = candlesCacheRef.current;
+      if (!cache || cache.pair !== pair || cache.data.length < 14) return;
+      const closes = cache.data.map(c => c.close);
+      // EMA-9 vs EMA-21 bias
+      const ema = (n: number) => {
+        const k = 2 / (n + 1);
+        const chron = [...closes].reverse();
+        let v = chron[0];
+        for (let i = 1; i < chron.length; i++) v = chron[i] * k + v * (1 - k);
+        return v;
+      };
+      const e9 = ema(9), e21 = ema(21);
+      const last = cache.data[0];
+      const body = Math.abs(last.close - last.open);
+      const range = (last.high - last.low) || 1e-9;
+      const bodyRatio = body / range;
+      // RSI-7
+      const chron = [...closes].reverse();
+      let g = 0, l = 0;
+      for (let i = chron.length - 7; i < chron.length; i++) {
+        const d = chron[i] - chron[i - 1];
+        if (d > 0) g += d; else l -= d;
+      }
+      const rsiVal = l === 0 ? 100 : 100 - 100 / (1 + (g / 7) / (l / 7));
+      const livePx = priceRef.current ?? last.close;
+      const drift = (livePx - e21) / (e21 || 1);
+      const bullVotes =
+        (e9 > e21 ? 1 : 0) +
+        (last.close > last.open ? 1 : 0) +
+        (rsiVal > 55 ? 1 : 0) +
+        (drift > 0 ? 1 : 0);
+      const bearVotes = 4 - bullVotes;
+      const bias: "BULL" | "BEAR" | "NEUTRAL" =
+        bullVotes >= 3 ? "BULL" : bearVotes >= 3 ? "BEAR" : "NEUTRAL";
+      // Quality score: bias conviction + body strength + rsi clarity
+      const conviction = Math.abs(bullVotes - bearVotes) * 12; // 0..48
+      const bodyScore = Math.round(bodyRatio * 25);            // 0..25
+      const rsiClarity = Math.round(Math.abs(rsiVal - 50) * 0.6); // 0..30
+      const score = Math.max(15, Math.min(99, 40 + conviction + bodyScore + rsiClarity - 30));
+      const candleState =
+        bodyRatio < 0.25 ? "Doji / indecision" :
+        last.close > last.open
+          ? bodyRatio > 0.7 ? "Strong bullish marubozu" : "Bullish candle forming"
+          : bodyRatio > 0.7 ? "Strong bearish marubozu" : "Bearish candle forming";
+      if (alive) setPulse({ bias, score, rsi: rsiVal, candleState, updatedAt: new Date().toLocaleTimeString(undefined, { hour12: false }) });
+    };
+
+    const refreshCandles = async () => {
+      try {
+        const data = await fetchCandles(pair, "1min", 30);
+        if (!alive) return;
+        candlesCacheRef.current = { pair, data };
+        computePulse();
+      } catch { /* keep last cache */ }
+      if (alive) fetchT = window.setTimeout(refreshCandles, 6_000);
+    };
+    const tickPulse = () => {
+      computePulse();
+      if (alive) pulseT = window.setTimeout(tickPulse, 1_000);
+    };
+    refreshCandles();
+    tickPulse();
+    return () => {
+      alive = false;
+      if (pulseT) window.clearTimeout(pulseT);
+      if (fetchT) window.clearTimeout(fetchT);
+    };
+  }, [pair, weekend.locked]);
+
 
   // Live countdown until entry time (when to enter the trade)
   useEffect(() => {
@@ -119,6 +234,12 @@ const BinarySignalPanel = (_: Props) => {
   };
 
   const handleGenerate = async (mtgStep: 0 | 1 = 0, previousLossDirection?: "CALL" | "PUT") => {
+    const lock = getWeekendLock(pair);
+    if (lock.locked) {
+      toast.error(lock.msg);
+      speakBangla("সাপ্তাহিক ছুটির কারণে ফরেক্স মার্কেট বন্ধ। সিগন্যাল ইঞ্জিন লক করা হয়েছে।");
+      return;
+    }
     if (!canAnalyze) {
       toast.error(`Daily binary limit reached (${BINARY_DAILY_LIMIT} signals / 24h)`);
       return;
@@ -281,13 +402,60 @@ const BinarySignalPanel = (_: Props) => {
         </Select>
         <Button
           onClick={() => handleGenerate()}
-          disabled={loading || !canAnalyze}
+          disabled={loading || !canAnalyze || weekend.locked}
           size="lg"
-          className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90"
+          className="font-display tracking-wider bg-gradient-to-r from-primary to-accent hover:opacity-90 disabled:opacity-60"
         >
-          {loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>) : (<><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>)}
+          {weekend.locked ? (<><Lock className="w-4 h-4 mr-2" /> WEEKEND LOCK</>) :
+            loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> ANALYZING…</>) :
+            (<><Zap className="w-4 h-4 mr-2" /> GET SIGNAL</>)}
         </Button>
       </div>
+
+      {weekend.locked && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+          className="mb-3 p-3 rounded-lg border-2 border-warning/50 bg-warning/10 flex items-start gap-3"
+        >
+          <Lock className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-display text-sm font-bold text-warning tracking-wider">WEEKEND • SIGNAL ENGINE LOCKED</div>
+            <div className="font-mono text-[11px] text-muted-foreground mt-1">{weekend.msg}</div>
+          </div>
+        </motion.div>
+      )}
+
+      {!weekend.locked && pulse && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+          className="mb-3 p-3 rounded-lg border border-primary/30 bg-primary/5 relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <ScanLine className="w-4 h-4 text-primary animate-pulse" />
+              <span className="font-display text-[11px] tracking-widest text-primary">CONTINUOUS ANALYSES • LIVE</span>
+            </div>
+            <span className="font-mono text-[10px] text-muted-foreground">{pulse.updatedAt}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">BIAS</div>
+              <div className={`font-display text-sm font-bold ${pulse.bias === "BULL" ? "text-buy" : pulse.bias === "BEAR" ? "text-sell" : "text-muted-foreground"}`}>{pulse.bias}</div>
+            </div>
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">QUALITY</div>
+              <div className={`font-display text-sm font-bold ${pulse.score >= 75 ? "text-buy" : pulse.score >= 55 ? "text-primary" : "text-warning"}`}>{pulse.score}%</div>
+            </div>
+            <div className="p-2 rounded bg-background/60 border border-border/40">
+              <div className="font-mono text-[10px] text-muted-foreground">RSI(7)</div>
+              <div className="font-display text-sm font-bold">{pulse.rsi.toFixed(0)}</div>
+            </div>
+          </div>
+          <div className="font-mono text-[11px] text-muted-foreground mt-2 truncate">
+            ◉ {pulse.candleState}
+          </div>
+        </motion.div>
+      )}
 
       {/* Live price ticker */}
       <div className="flex items-center justify-between mb-3 px-3 py-2 rounded bg-background/50 border border-border/40">
