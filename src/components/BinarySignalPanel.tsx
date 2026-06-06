@@ -151,8 +151,6 @@ const BinarySignalPanel = (_: Props) => {
     };
   }, [pair, weekend.locked]);
 
-  // Live countdown until entry time (when to enter the trade)
-  useEffect(() => {
 
   // Live countdown until entry time (when to enter the trade)
   useEffect(() => {
