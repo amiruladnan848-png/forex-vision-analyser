@@ -71,6 +71,7 @@ function adxApprox(candles: OHLC[], period = 14): number {
   }
   const di = trSum > 0 ? Math.abs(plus - minus) / (plus + minus + 1e-9) * 100 : 0;
   return Math.min(60, di);
+}
 
 // MACD(12,26,9) momentum — returns histogram & cross direction
 function macd(closes: number[]) {
